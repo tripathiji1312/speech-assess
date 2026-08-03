@@ -101,12 +101,16 @@ def main():
         ex["_id"] = f"train-{i:06d}"
     for i, ex in enumerate(val):
         ex["_id"] = f"val-{i:06d}"
+
+    def slim(ex):
+        return {"_id": ex["_id"], "conversations": ex["conversations"]}
+
     with open(out / "train.jsonl", "w") as f:
         for ex in train:
-            f.write(json.dumps(ex, ensure_ascii=False) + "\n")
+            f.write(json.dumps(slim(ex), ensure_ascii=False) + "\n")
     with open(out / "val.jsonl", "w") as f:
         for ex in val:
-            f.write(json.dumps(ex, ensure_ascii=False) + "\n")
+            f.write(json.dumps(slim(ex), ensure_ascii=False) + "\n")
 
     def nchars(rows):
         return sum(len(m["value"]) for r in rows for m in r["conversations"])
