@@ -17,17 +17,17 @@ from pathlib import Path
 
 try:
     import torch
+    from unsloth import FastLanguageModel, is_bfloat16_supported  # noqa: E402 - before trl
     from datasets import Dataset
     from trl import DPOTrainer, DPOConfig
-    from unsloth import FastLanguageModel, is_bfloat16_supported
 except ImportError:
     print("Missing deps, installing...")
     subprocess.run([sys.executable, "-m", "pip", "install", "-q",
                     "unsloth", "trl", "datasets", "accelerate", "peft"], check=True)
     import torch
+    from unsloth import FastLanguageModel, is_bfloat16_supported
     from datasets import Dataset
     from trl import DPOTrainer, DPOConfig
-    from unsloth import FastLanguageModel, is_bfloat16_supported
 
 
 def main():
@@ -92,6 +92,9 @@ def main():
     ds = Dataset.from_list(pairs)
     print(f"loaded {len(ds)} preference pairs")
 
+    steps = max(1, len(ds) * args.epochs / (args.batch_size * 2))
+    warmup_steps = int(steps * 0.1)
+
     import inspect
     dpo_params = inspect.signature(DPOTrainer.__init__).parameters
 
@@ -103,10 +106,10 @@ def main():
         learning_rate=args.lr,
         lr_scheduler_type="cosine",
         max_grad_norm=1.0,
-        fp16=fp16,
-        bf16=not fp16,
-        warmup_ratio=0.1,
-        logging_steps=10,
+            fp16=fp16,
+            bf16=not fp16,
+            warmup_steps=warmup_steps,
+            logging_steps=10,
         report_to=report_to,
         output_dir="/kaggle/working/dpo_ckpt",
         seed=42,

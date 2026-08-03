@@ -38,10 +38,14 @@ dataset/  kaggle/  scripts/  configs/  KAGGLE_TRAINING.md  PLAN.md  README.md  .
 94M	/kaggle/working/medchat/dataset/final/
 ```
 
-### Cell 2 — Install dependencies (one-time, ~2-4 min)
+### Cell 2 — Install dependencies (one-time, ~2-6 min)
 
 ```python
-!pip install -q --no-warn-script-location -U unsloth trl datasets accelerate peft bitsandbytes scikit-learn wandb
+# OPTIONAL but recommended: torch >= 2.11 unlocks unsloth's fast kernels (2x speed).
+# If it fails, training still works — just slower. (Kaggle ships torch 2.10.)
+!pip install -q -U torch --index-url https://download.pytorch.org/whl/cu128 || echo "torch upgrade skipped - continuing"
+
+!pip install -q --no-warn-script-location -U unsloth trl datasets accelerate peft bitsandbytes scikit-learn
 !pip install -q --no-warn-script-location llama-cpp-python
 ```
 
@@ -330,6 +334,10 @@ FileLink("/kaggle/working/medchat-q4.gguf")   # ~2.6 GB, the deployable artifact
 |---|---|
 | `can't open file .../scripts/xxx.py: No such file or directory` | Cell ran before Cell 1, or wrong path. Re-run Cell 1; all cells use absolute `/kaggle/working/medchat/...` paths |
 | `dataset/dpo.jsonl: No such file or directory` | Same — the repo (and its dataset) lives at `/kaggle/working/medchat/`, not `/kaggle/working/` |
+| `cannot pickle 'ConfigModuleInstance'` | Fixed in current code — SFT now uses `transformers.Trainer` with pre-tokenized data (no trl multiprocess re-tokenization). If you see it, you're running the old `train_sft.py`: `!git pull` and re-run |
+| `WARNING: Unsloth should be imported before [trl, transformers, peft]` | Fixed in current code (unsloth imported first). `git pull` to update |
+| `warmup_ratio is deprecated` | Fixed — code now computes `warmup_steps` explicitly |
+| `Skipping import of cpp extensions ... upgrade to torch >= 2.11` | Harmless but slower. Run the optional torch-upgrade line in Cell 2 |
 | `CUDA out of memory` (Cell 4) | `--batch-size 2 --grad-accum 4`; keep `--flash` OFF on T4/P100 |
 | `model load failed` | Internet dropped mid-download → re-run Cell 4; or swap `--model Qwen/Qwen3-4B-Instruct` |
 | `valid_json 0/8` (Cell 5) | Format bug → look at raw generation, re-run Cell 4 |
@@ -347,6 +355,7 @@ FileLink("/kaggle/working/medchat-q4.gguf")   # ~2.6 GB, the deployable artifact
 | lr / schedule | 2e-4 / cosine | QLoRA default; warmup 5% |
 | epochs | 3 | 42k rows ≈ 19.5M tokens × 3 ≈ 58M ≈ 14x model size (rule of thumb) |
 | packing | OFF | JSON outputs need clean per-example attention, not concatenation |
+| SFT engine | transformers.Trainer (pre-tokenized) | avoids trl's multiprocess pickling crash; prompt masked (loss only on model output) |
 | fp16 on T4/P100 | forced | bf16 unsupported below Ampere |
 | DPO beta / lr / epochs | 0.1 / 5e-5 / 1 | single pass over 1k pairs; avoid preference overfitting |
 | max_seq_len 2048 (SFT) | longest row ~1500 | rows > 2016 tokens are dropped, never truncated |

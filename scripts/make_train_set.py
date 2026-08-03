@@ -58,27 +58,27 @@ def main():
     rng = random.Random(args.seed)
     tasks = {
         "extraction": [
-            (root / "extraction_train.jsonl", False),
-            (root / "extraction_val.jsonl", False),
+            (root / "extraction_train.jsonl", False, True),
+            (root / "extraction_val.jsonl", False, True),
         ],
         "guardrail": [
-            (root / "guardrail_train.jsonl", False),
-            (root / "guardrail_val.jsonl", False),
+            (root / "guardrail_train.jsonl", False, True),
+            (root / "guardrail_val.jsonl", False, True),
         ],
-        "grounded_qa": [(root / "grounded_qa.jsonl", True)],
-        "safety": [(root / "safety.jsonl", True)],
+        "grounded_qa": [(root / "grounded_qa.jsonl", True, True)],
+        "safety": [(root / "safety.jsonl", True, True)],
     }
     extra_dir = root / "extra"
     if extra_dir.exists():
-        tasks["extra"] = [(p, True) for p in sorted(extra_dir.glob("*.jsonl"))]
+        tasks["extra"] = [(p, True, False) for p in sorted(extra_dir.glob("*.jsonl"))]
 
     train, val = [], []
     seen = set()
     stats = {}
     for task, files in tasks.items():
         stats[task] = {"rows": 0, "train": 0, "val": 0}
-        for path, do_split in files:
-            for ex in load(path, require=path.exists()):
+        for path, do_split, required in files:
+            for ex in load(path, require=required):
                 h = content_hash(ex)
                 if h in seen:
                     continue
@@ -103,7 +103,11 @@ def main():
         ex["_id"] = f"val-{i:06d}"
 
     def slim(ex):
-        return {"_id": ex["_id"], "conversations": ex["conversations"]}
+        out = {"_id": ex["_id"], "conversations": ex["conversations"]}
+        for meta in ("category", "corruption"):
+            if meta in ex:
+                out[meta] = ex[meta]
+        return out
 
     with open(out / "train.jsonl", "w") as f:
         for ex in train:

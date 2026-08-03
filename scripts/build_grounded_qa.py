@@ -60,7 +60,7 @@ def extract_topic(text, question=None):
 
 
 def q_variants(original, topic, rng):
-    vs = [original]
+    vs = [original] if original.strip() else []
     if topic:
         t = topic
         if t and t[0].isupper() and len(t) > 1 and t[1].islower():
@@ -141,11 +141,12 @@ def main():
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     seen_q = set()
+    seen_dpo = set()
     sft_rows, dpo_rows = [], []
     for i, e in enumerate(corpus):
         chunk = chunk_answer(e["a"])
         topic = extract_topic(chunk, e["q"])
-        for q in q_variants(e["q"], topic, rng):
+        for vi, q in enumerate(q_variants(e["q"], topic, rng)):
             key = re.sub(r"\s+", " ", q.lower())
             if key in seen_q:
                 continue
@@ -157,14 +158,14 @@ def main():
                     other = corpus[rng.randrange(len(corpus))]
                 user = f"Context:\n{chunk_answer(other['a'])}\n\nQuestion: {q}"
                 sft_rows.append({
-                    "_id": f"gqa-abstain-{i:06d}",
+                    "_id": f"gqa-abstain-{i:06d}-{vi:02d}",
                     "source": e["src"],
                     "conversations": to_messages(SYSTEM_PROMPT, user, ABSTAIN_ANSWER),
                 })
             else:
                 gpt = COVERED_TEMPLATE.format(text=chunk, source=e["src"])
                 sft_rows.append({
-                    "_id": f"gqa-{i:06d}",
+                    "_id": f"gqa-{i:06d}-{vi:02d}",
                     "source": e["src"],
                     "conversations": to_messages(SYSTEM_PROMPT, user, gpt),
                 })
@@ -172,14 +173,24 @@ def main():
                 other = corpus[rng.randrange(len(corpus))]
                 while other is e:
                     other = corpus[rng.randrange(len(corpus))]
-                dpo_rows.append({
-                    "_id": f"dpo-{i:06d}",
-                    "source": e["src"],
-                    "system": SYSTEM_PROMPT,
-                    "prompt": user,
-                    "chosen": COVERED_TEMPLATE.format(text=chunk, source=e["src"]),
-                    "rejected": COVERED_TEMPLATE.format(text=chunk_answer(other["a"]), source=other["src"]),
-                })
+                for _ in range(10):
+                    o_topic = extract_topic(chunk_answer(other["a"]), other["q"])
+                    if o_topic is None or (topic and o_topic.lower() != topic.lower()):
+                        break
+                    other = corpus[rng.randrange(len(corpus))]
+                    while other is e:
+                        other = corpus[rng.randrange(len(corpus))]
+                dpo_key = (user, chunk, other["src"])
+                if dpo_key not in seen_dpo:
+                    seen_dpo.add(dpo_key)
+                    dpo_rows.append({
+                        "_id": f"dpo-{i:06d}-{vi:02d}",
+                        "source": e["src"],
+                        "system": SYSTEM_PROMPT,
+                        "prompt": user,
+                        "chosen": COVERED_TEMPLATE.format(text=chunk, source=e["src"]),
+                        "rejected": COVERED_TEMPLATE.format(text=chunk_answer(other["a"]), source=other["src"]),
+                    })
 
     with open(out_path, "w") as f:
         for r in sft_rows:
