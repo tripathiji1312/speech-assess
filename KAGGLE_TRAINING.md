@@ -10,7 +10,7 @@ On an L4/A100: roughly half.
 
 ## 0. Before you start (on your laptop)
 
-### 0.1 Push the repo to GitHub
+### 0.1 Push the repo to GitHub (dataset included)
 
 ```bash
 cd /home/tripathiji/projects/speech
@@ -19,25 +19,14 @@ git remote add origin git@github.com:<your-user>/<your-repo>.git
 git push -u origin main
 ```
 
-### 0.2 Upload the dataset to Kaggle (recommended)
+The dataset (train.jsonl 88 MB, val.jsonl, dpo.jsonl) is **inside the repo**, so the
+notebook gets it via `git clone` — no Kaggle Dataset upload needed.
 
-Option A — Kaggle Dataset:
-1. Create a new Dataset at https://www.kaggle.com/datasets (`New Dataset` → upload a folder).
-2. Upload a zip containing:
-   - `dataset/final/train.jsonl`
-   - `dataset/final/val.jsonl`
-   - `dataset/dpo.jsonl`
-   - `configs/extraction.gbnf`
-   - `configs/guardrail.gbnf`
-3. Name it e.g. `medchat-final`. Note the slug: `/kaggle/input/medchat-final`.
+> Make the repo **public** (or use a PAT: `git clone https://<token>@github.com/...`).
+> Watch the 100 MB-per-file GitHub limit — train.jsonl is 88 MB, so never append
+> more data into that file without splitting it.
 
-Option B — skip the Dataset, upload the zip directly to the notebook with the
-"Add input → Upload" button. The path will still be `/kaggle/input/<zip-name>/`.
-
-> If you only have the zip in the notebook, replace `medchat-final` in every
-> cell below with your actual `/kaggle/input/` folder name.
-
-### 0.3 Verify your data locally (optional but recommended)
+### 0.2 Verify your data locally (optional but recommended)
 
 ```bash
 python scripts/make_train_set.py -o dataset/final/     # should print train/val counts
@@ -52,8 +41,8 @@ python scripts/eval_harness.py --help                  # parses fine
 1. https://www.kaggle.com → Notebooks → New Notebook.
 2. Settings (right panel):
    - **Accelerator: GPU T4 x2** (or P100; L4/A100 if available — faster)
-   - **Internet: ON** (required to pip-install unsloth)
-3. Add your `medchat-final` dataset: **Add Input → your dataset name**.
+   - **Internet: ON** (required for git clone + pip install)
+3. **No dataset to attach** — everything comes from the git clone.
 4. Save. Then run the cells below **in order**.
 
 > Free-tier GPU quota: a T4 session lasts up to 9 h — enough for the whole
@@ -67,13 +56,14 @@ python scripts/eval_harness.py --help                  # parses fine
 
 ## 2. Cells — copy each block into its own cell
 
-### Cell 1 — Clone the repo
+### Cell 1 — Clone the repo (brings code + dataset)
 
 ```bash
 cd /kaggle/working
 git clone https://github.com/<your-user>/<your-repo>.git medchat
 cd medchat
 ls                                # expect: dataset/ kaggle/ scripts/ configs/ ...
+du -sh dataset/final/             # expect ~94M - the training data is here
 ```
 
 ### Cell 2 — Install dependencies (one-time, ~2-4 min)
@@ -82,7 +72,7 @@ ls                                # expect: dataset/ kaggle/ scripts/ configs/ .
 !pip install -q --no-warn-script-location \
     -U unsloth trl datasets accelerate peft bitsandbytes scikit-learn
 
-# optional: on-device smoke test with llama.cpp bindings (used in Cell 7)
+# optional: on-device smoke test with llama.cpp bindings (used in Cell 8)
 !pip install -q --no-warn-script-location llama-cpp-python
 ```
 
@@ -95,14 +85,12 @@ ls                                # expect: dataset/ kaggle/ scripts/ configs/ .
 import json
 from pathlib import Path
 
-data_root = Path("/kaggle/input/medchat-final")
-assert (data_root / "train.jsonl").exists(), "dataset not mounted - check Add Input"
-
-for name in ["train.jsonl", "val.jsonl", "dpo.jsonl"]:
-    n = sum(1 for _ in open(data_root / name) if _.strip())
+repo = Path("/kaggle/working/medchat")
+for name in ["dataset/final/train.jsonl", "dataset/final/val.jsonl", "dataset/dpo.jsonl"]:
+    n = sum(1 for _ in open(repo / name) if _.strip())
     print(f"{name}: {n} rows")
 
-r = json.loads(next(open(data_root / "train.jsonl")))
+r = json.loads(next(open(repo / "dataset/final/train.jsonl")))
 print("first row _id:", r["_id"], "| roles:", [m["from"] for m in r["conversations"]])
 print("sample system:", r["conversations"][0]["value"][:60])
 ```
@@ -119,7 +107,7 @@ dpo.jsonl: 1047 rows
 
 ```python
 !python /kaggle/working/medchat/kaggle/train_sft.py \
-    --data /kaggle/input/medchat-final/train.jsonl \
+    --data /kaggle/working/medchat/dataset/final/train.jsonl \
     --model unsloth/Qwen3-4B-Instruct \
     --out /kaggle/working/sft_qwen3_4b \
     --epochs 3 --lr 2e-4 \
@@ -143,7 +131,7 @@ Checks that the chat template + output format actually work before spending time
 ```python
 !python /kaggle/working/medchat/scripts/eval_harness.py \
     --checkpoint /kaggle/working/sft_qwen3_4b \
-    --split /kaggle/input/medchat-final/val.jsonl \
+    --split /kaggle/working/medchat/dataset/final/val.jsonl \
     --max-examples 8 --max-new-tokens 512
 ```
 
@@ -155,7 +143,7 @@ If `valid_json` is 0/8, stop and check: model path, GPU memory, or rerun Cell 4.
 ```python
 !python /kaggle/working/medchat/kaggle/dpo_stage2.py \
     --model /kaggle/working/sft_qwen3_4b \
-    --data /kaggle/input/medchat-final/dpo.jsonl \
+    --data /kaggle/working/medchat/dataset/dpo.jsonl \
     --out /kaggle/working/sft_dpo \
     --beta 0.1 --lr 5e-5 --epochs 1 --batch-size 4 --max-seq-len 1024
 ```
@@ -188,7 +176,7 @@ llm = Llama(
     chat_template_kwargs={"enable_thinking": False},
 )
 
-grammar = open("/kaggle/input/medchat-final/extraction.gbnf").read()
+grammar = open("/kaggle/working/medchat/configs/extraction.gbnf").read()
 transcript = (
     "Doctor: What's going on today?\n"
     "Patient: chest pain for about 2 hours. It's severe.\n"
@@ -217,7 +205,7 @@ If this prints garbage, do **not** download the GGUF — rerun Cell 4/6.
 ```python
 !python /kaggle/working/medchat/scripts/eval_harness.py \
     --checkpoint /kaggle/working/sft_dpo \
-    --split /kaggle/input/medchat-final/val.jsonl \
+    --split /kaggle/working/medchat/dataset/final/val.jsonl \
     --max-examples 300 --max-new-tokens 512
 ```
 
@@ -252,7 +240,7 @@ Click the link → downloads through the Kaggle UI. The GGUF is your deployable.
 |---|---|
 | `CUDA out of memory` in Cell 4 | `--batch-size 2 --grad-accum 4`; ensure `--flash` is OFF on T4/P100 |
 | `model load failed` | Internet dropped mid-download → re-run cell; or swap `--model Qwen/Qwen3-4B-Instruct` |
-| `train.jsonl not found` | Dataset not attached → Settings → Add Input; check the actual `/kaggle/input/<slug>` name |
+| `train.jsonl not found` | Repo not cloned or wrong path → check `/kaggle/working/medchat/dataset/final/` exists |
 | `valid_json 0/8` in Cell 5 | Format bug — check Cell 5 output text; it prints raw generations for inspection |
 | DPO `KeyError: 'prompt'` | Old trl version → re-run Cell 2 (pip) then restart kernel |
 | GGUF smoke test prints JSON + noise | `enable_thinking` not disabled — llama.cpp version too old; `pip install -U llama-cpp-python` |
