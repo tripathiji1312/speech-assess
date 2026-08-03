@@ -63,11 +63,20 @@ def main():
     ap.add_argument("--grad-accum", type=int, default=2)
     ap.add_argument("--warmup-ratio", type=float, default=0.05)
     ap.add_argument("--flash", action="store_true", help="try flash attention (Ampere+ only)")
+    ap.add_argument("--wandb", action="store_true", help="log to Weights & Biases")
+    ap.add_argument("--wandb-project", default="medchat-edge")
     args = ap.parse_args()
 
     data_path = Path(args.data)
     if not data_path.exists():
         raise SystemExit(f"ERROR: {data_path} not found. Upload dataset/final/ to Kaggle and fix --data.")
+
+    report_to = "none"
+    if args.wandb:
+        import wandb
+        wandb.init(project=args.wandb_project, name="sft-qwen3-4b",
+                   config=vars(args), tags=["sft", "qlora"])
+        report_to = "wandb"
 
     fp16 = not is_bfloat16_supported()  # T4/P100 -> fp16
     print(f"dtype: {'bf16' if not fp16 else 'fp16'}")
@@ -139,7 +148,7 @@ def main():
             logging_steps=20,
             save_strategy="epoch",
             save_total_limit=1,
-            report_to="none",
+            report_to=report_to,
             output_dir="/kaggle/working/ckpt",
             seed=42,
             optim="adamw_8bit",
@@ -151,6 +160,11 @@ def main():
     model.save_pretrained_merged(args.out, tokenizer, save_method="merged_16bit")
     tokenizer.save_pretrained(args.out)
     print(f"saved merged model -> {args.out}")
+
+    if args.wandb:
+        import wandb
+        if wandb.run is not None:
+            wandb.finish()
 
 
 if __name__ == "__main__":

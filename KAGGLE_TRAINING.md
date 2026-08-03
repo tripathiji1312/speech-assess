@@ -41,7 +41,7 @@ dataset/  kaggle/  scripts/  configs/  KAGGLE_TRAINING.md  PLAN.md  README.md  .
 ### Cell 2 — Install dependencies (one-time, ~2-4 min)
 
 ```python
-!pip install -q --no-warn-script-location -U unsloth trl datasets accelerate peft bitsandbytes scikit-learn
+!pip install -q --no-warn-script-location -U unsloth trl datasets accelerate peft bitsandbytes scikit-learn wandb
 !pip install -q --no-warn-script-location llama-cpp-python
 ```
 
@@ -79,10 +79,11 @@ Expected output:
 ```bash
 !python /kaggle/working/medchat/kaggle/train_sft.py \
     --data /kaggle/working/medchat/dataset/final/train.jsonl \
-    --model unsloth/Qwen3-4B-Instruct \
+    --model Qwen/Qwen3-4B-Instruct-2507 \
     --out /kaggle/working/sft_qwen3_4b \
     --epochs 3 --lr 2e-4 \
-    --batch-size 4 --grad-accum 2 --max-seq-len 2048
+    --batch-size 4 --grad-accum 2 --max-seq-len 2048 \
+    --wandb
 ```
 
 What you should see: `dtype: fp16` (T4/P100) or `bf16` (L4/A100+), `loaded 41845 rows`, per-epoch loss decreasing (~2.0 → ~1.3).
@@ -112,7 +113,8 @@ If `valid_json: 0/8`, stop — do not continue; check raw output / re-run Cell 4
     --model /kaggle/working/sft_qwen3_4b \
     --data /kaggle/working/medchat/dataset/dpo.jsonl \
     --out /kaggle/working/sft_dpo \
-    --beta 0.1 --lr 5e-5 --epochs 1 --batch-size 4 --max-seq-len 1024
+    --beta 0.1 --lr 5e-5 --epochs 1 --batch-size 4 --max-seq-len 1024 \
+    --wandb
 ```
 
 Expected: `loaded 1047 preference pairs`, loss trending down.
@@ -184,7 +186,136 @@ Record these — your release gates:
 | grounded abstain_correct | >= 0.95 |
 | safety behavior_ok | >= 0.95 |
 
-### Cell 10 — Download the GGUF
+### Cell 10 — Upload everything to Weights & Biases
+
+```python
+import wandb, json, os, re
+from pathlib import Path
+
+# Log in — paste API key when prompted, or pre-set via Kaggle Secrets (see note below)
+wandb.login()
+
+run = wandb.init(
+    project="medchat-edge",
+    name="final-export",
+    tags=["export", "eval", "gguf"],
+    config={
+        "base_model": "Qwen/Qwen3-4B-Instruct-2507",
+        "quant": "q4_k_m",
+        "sft_epochs": 3,
+        "sft_lr": 2e-4,
+        "dpo_beta": 0.1,
+        "dpo_epochs": 1,
+        "train_rows": 41845,
+        "val_rows": 4224,
+        "dpo_pairs": 1047,
+    },
+)
+
+# --- 1. Upload the GGUF model artifact ---
+gguf_path = "/kaggle/working/medchat-q4.gguf"
+if os.path.exists(gguf_path):
+    artifact = wandb.Artifact("medchat-gguf", type="model",
+                              description="Qwen3-4B fine-tuned, Q4_K_M quantized for on-device deployment")
+    artifact.add_file(gguf_path)
+    run.log_artifact(artifact)
+    print(f"uploaded GGUF artifact ({os.path.getsize(gguf_path)/1e9:.2f} GB)")
+else:
+    print(f"WARN: {gguf_path} not found, skipping GGUF upload")
+
+# --- 2. Upload GBNF grammars + configs ---
+artifact = wandb.Artifact("medchat-configs", type="config",
+                          description="GBNF grammars and hyperparameter configs")
+for fname in ["configs/extraction.gbnf", "configs/guardrail.gbnf", "configs/sft.yaml", "configs/dpo.yaml"]:
+    p = f"/kaggle/working/medchat/{fname}"
+    if os.path.exists(p):
+        artifact.add_file(p)
+run.log_artifact(artifact)
+print("uploaded configs artifact")
+
+# --- 3. Run eval and log metrics ---
+import subprocess
+eval_out = subprocess.run(
+    ["python", "/kaggle/working/medchat/scripts/eval_harness.py",
+     "--checkpoint", "/kaggle/working/sft_dpo",
+     "--split", "/kaggle/working/medchat/dataset/final/val.jsonl",
+     "--max-examples", "300", "--max-new-tokens", "512"],
+    capture_output=True, text=True
+)
+eval_text = eval_out.stdout
+if eval_out.returncode != 0:
+    print("WARN: eval_harness failed:")
+    print(eval_out.stderr[-2000:])
+else:
+    print(eval_text)
+
+# Parse eval metrics robustly
+metrics = {}
+current_task = ""
+for line in eval_text.split("\n"):
+    m = re.match(r"^=== (\w+)", line)
+    if m:
+        current_task = m.group(1)
+        continue
+    if current_task and ":" in line:
+        key, val = line.strip().split(":", 1)
+        key = key.strip()
+        val = val.strip()
+        try:
+            metrics[f"eval/{current_task}/{key}"] = float(val)
+        except ValueError:
+            # Handle "250/300" format
+            parts = val.split("/")
+            if len(parts) == 2:
+                try:
+                    metrics[f"eval/{current_task}/{key}"] = int(parts[0]) / int(parts[1])
+                except ValueError:
+                    pass
+
+if metrics:
+    wandb.log(metrics)
+    print(f"\nLogged {len(metrics)} eval metrics to wandb")
+else:
+    print("WARN: no metrics parsed from eval output")
+
+# --- 4. Upload dataset stats ---
+stats_path = "/kaggle/working/medchat/dataset/final/stats.json"
+if os.path.exists(stats_path):
+    with open(stats_path) as f:
+        stats = json.load(f)
+    summary = stats.get("_summary", {})
+    wandb.log({f"dataset/{k}": v for k, v in summary.items()})
+
+# --- 5. Save raw eval output as text file ---
+eval_log_path = "/kaggle/working/eval_results.txt"
+with open(eval_log_path, "w") as f:
+    f.write(eval_text)
+wandb.save(eval_log_path)
+
+run.finish()
+print("\nDone! View results at: https://wandb.ai")
+```
+
+> **First time?** Get your API key from https://wandb.ai/authorize. On Kaggle, add it as a Secret named `WANDB_API_KEY` and load before this cell:
+> ```python
+> from kaggle_secrets import UserSecretsClient
+> import os
+> os.environ["WANDB_API_KEY"] = UserSecretsClient().get_secret("WANDB_API_KEY")
+> ```
+>
+> **Optional: upload the full merged model (~8 GB).** Only do this if you have time left in your session:
+> ```python
+> sft_dpo_path = "/kaggle/working/sft_dpo"
+> if os.path.isdir(sft_dpo_path):
+>     artifact = wandb.Artifact("medchat-sft-dpo-merged", type="model",
+>                               description="Merged 16-bit SFT+DPO model")
+>     artifact.add_dir(sft_dpo_path)
+>     wandb.init(project="medchat-edge", name="upload-merged-model")
+>     wandb.log_artifact(artifact)
+>     wandb.finish()
+> ```
+
+### Cell 11 — Download the GGUF
 
 ```python
 from IPython.display import FileLink

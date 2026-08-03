@@ -40,7 +40,16 @@ def main():
     ap.add_argument("--epochs", type=float, default=1.0)
     ap.add_argument("--batch-size", type=int, default=4)
     ap.add_argument("--max-seq-len", type=int, default=1024)
+    ap.add_argument("--wandb", action="store_true", help="log to Weights & Biases")
+    ap.add_argument("--wandb-project", default="medchat-edge")
     args = ap.parse_args()
+
+    report_to = "none"
+    if args.wandb:
+        import wandb
+        wandb.init(project=args.wandb_project, name="dpo-hallucination-reduction",
+                   config=vars(args), tags=["dpo", "grounding"])
+        report_to = "wandb"
 
     fp16 = not is_bfloat16_supported()
 
@@ -98,7 +107,7 @@ def main():
             bf16=not fp16,
             warmup_ratio=0.1,
             logging_steps=10,
-            report_to="none",
+            report_to=report_to,
             output_dir="/kaggle/working/dpo_ckpt",
             seed=42,
             optim="adamw_8bit",
@@ -116,6 +125,11 @@ def main():
     model.save_pretrained_merged(args.out, tokenizer, save_method="merged_16bit")
     tokenizer.save_pretrained(args.out)
     print(f"saved DPO model -> {args.out}")
+
+    if args.wandb:
+        import wandb
+        if wandb.run is not None:
+            wandb.finish()
 
 
 if __name__ == "__main__":
