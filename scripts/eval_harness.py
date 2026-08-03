@@ -100,7 +100,9 @@ def batch_generate(model, tokenizer, rows, max_new=512):
     with torch.no_grad():
         for i in range(0, len(prompts), 8):
             batch = prompts[i:i + 8]
-            enc = tokenizer.pad(batch, return_tensors="pt", padding=True)
+            enc = tokenizer.pad(
+                {"input_ids": batch},
+                return_tensors="pt", padding=True)
             enc = {k: v.to(model.device) for k, v in enc.items()}
             gen = model.generate(
                 **enc, max_new_tokens=max_new, do_sample=False,

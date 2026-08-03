@@ -109,7 +109,7 @@ def main():
 
     lens = ds.map(lambda r: {"n_tok": row_len(r)})
     max_tok = args.max_seq_len - 32
-    dropped = (lens["n_tok"] > max_tok).sum()
+    dropped = sum(1 for x in lens["n_tok"] if x > max_tok)
     if dropped:
         print(f"WARNING: dropping {dropped} rows longer than {max_tok} tokens "
               f"(avoids silent truncation of JSON labels)")

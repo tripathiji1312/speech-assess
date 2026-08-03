@@ -168,6 +168,9 @@ def build_issue(case, transcript, field, claim, problem, corruption):
         ev = ""
     if not ev and field in FIELD_QUESTION_NEEDLES:
         ev = find_line(transcript, FIELD_QUESTION_NEEDLES[field])
+    if not ev:
+        patient_lines = [l for l in transcript.split("\n") if l.startswith("Patient:")]
+        ev = patient_lines[0] if patient_lines else transcript.split("\n")[0]
     return {
         "field": field,
         "claim": claim,
