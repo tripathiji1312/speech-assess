@@ -92,10 +92,14 @@ def batch_generate(model, tokenizer, rows, max_new=512):
     import torch
     prompts = []
     for r in rows:
-        prompts.append(tokenizer.apply_chat_template(
-            to_messages(r["conversations"][:-1]), tokenize=True,
-            add_generation_prompt=True,
-            chat_template_kwargs={"enable_thinking": False}))
+        kwargs = dict(tokenize=True, add_generation_prompt=True)
+        try:
+            prompts.append(tokenizer.apply_chat_template(
+                to_messages(r["conversations"][:-1]),
+                chat_template_kwargs={"enable_thinking": False}, **kwargs))
+        except (TypeError, KeyError):
+            prompts.append(tokenizer.apply_chat_template(
+                to_messages(r["conversations"][:-1]), **kwargs))
     out = []
     with torch.no_grad():
         for i in range(0, len(prompts), 8):

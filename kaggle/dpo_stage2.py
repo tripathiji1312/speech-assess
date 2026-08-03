@@ -92,33 +92,44 @@ def main():
     ds = Dataset.from_list(pairs)
     print(f"loaded {len(ds)} preference pairs")
 
-    trainer = DPOTrainer(
-        model=model,
-        ref_model=None,
-        args=DPOConfig(
-            beta=args.beta,
-            per_device_train_batch_size=args.batch_size,
-            gradient_accumulation_steps=2,
-            num_train_epochs=args.epochs,
-            learning_rate=args.lr,
-            lr_scheduler_type="cosine",
-            max_grad_norm=1.0,
-            fp16=fp16,
-            bf16=not fp16,
-            warmup_ratio=0.1,
-            logging_steps=10,
-            report_to=report_to,
-            output_dir="/kaggle/working/dpo_ckpt",
-            seed=42,
-            optim="adamw_8bit",
-        ),
-        train_dataset=ds,
+    import inspect
+    dpo_params = inspect.signature(DPOTrainer.__init__).parameters
+
+    dpo_config = DPOConfig(
+        beta=args.beta,
+        per_device_train_batch_size=args.batch_size,
+        gradient_accumulation_steps=2,
+        num_train_epochs=args.epochs,
+        learning_rate=args.lr,
+        lr_scheduler_type="cosine",
+        max_grad_norm=1.0,
+        fp16=fp16,
+        bf16=not fp16,
+        warmup_ratio=0.1,
+        logging_steps=10,
+        report_to=report_to,
+        output_dir="/kaggle/working/dpo_ckpt",
+        seed=42,
+        optim="adamw_8bit",
         max_length=args.max_seq_len,
         max_prompt_length=args.max_seq_len - 128,
-        **({"processing_class": tokenizer} if "processing_class" in
-           __import__("inspect").signature(DPOTrainer.__init__).parameters
-           else {"tokenizer": tokenizer}),
     )
+
+    dpo_kwargs = dict(
+        model=model,
+        ref_model=None,
+        args=dpo_config,
+        train_dataset=ds,
+    )
+    if "max_length" in dpo_params:
+        dpo_kwargs["max_length"] = args.max_seq_len
+    if "max_prompt_length" in dpo_params:
+        dpo_kwargs["max_prompt_length"] = args.max_seq_len - 128
+    if "processing_class" in dpo_params:
+        dpo_kwargs["processing_class"] = tokenizer
+    else:
+        dpo_kwargs["tokenizer"] = tokenizer
+    trainer = DPOTrainer(**dpo_kwargs)
 
     trainer.train()
     Path(args.out).mkdir(parents=True, exist_ok=True)

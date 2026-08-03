@@ -125,17 +125,12 @@ def main():
         ds = lens.filter(lambda r: r["n_tok"] <= max_tok)
     else:
         ds = lens
+    ds = ds.remove_columns(["n_tok"])
     print(f"loaded {len(ds)} rows")
 
-    import inspect
-    sft_kwargs = dict(
-        model=model,
-        train_dataset=ds,
-        dataset_text_field="text",
-        max_seq_length=args.max_seq_len,
-        dataset_num_proc=2,
-        packing=False,
-        args=TrainingArguments(
+    try:
+        from trl import SFTConfig
+        train_args = SFTConfig(
             per_device_train_batch_size=args.batch_size,
             gradient_accumulation_steps=args.grad_accum,
             warmup_ratio=args.warmup_ratio,
@@ -152,13 +147,44 @@ def main():
             output_dir="/kaggle/working/ckpt",
             seed=42,
             optim="adamw_8bit",
-        ),
-    )
-    if "processing_class" in inspect.signature(SFTTrainer.__init__).parameters:
-        sft_kwargs["processing_class"] = tokenizer
-    else:
-        sft_kwargs["tokenizer"] = tokenizer
-    trainer = SFTTrainer(**sft_kwargs)
+            max_seq_length=args.max_seq_len,
+            dataset_text_field="text",
+            packing=False,
+        )
+        trainer = SFTTrainer(
+            model=model,
+            processing_class=tokenizer,
+            train_dataset=ds,
+            args=train_args,
+        )
+    except ImportError:
+        trainer = SFTTrainer(
+            model=model,
+            tokenizer=tokenizer,
+            train_dataset=ds,
+            dataset_text_field="text",
+            max_seq_length=args.max_seq_len,
+            dataset_num_proc=2,
+            packing=False,
+            args=TrainingArguments(
+                per_device_train_batch_size=args.batch_size,
+                gradient_accumulation_steps=args.grad_accum,
+                warmup_ratio=args.warmup_ratio,
+                num_train_epochs=args.epochs,
+                learning_rate=args.lr,
+                lr_scheduler_type="cosine",
+                max_grad_norm=1.0,
+                fp16=fp16,
+                bf16=not fp16,
+                logging_steps=20,
+                save_strategy="epoch",
+                save_total_limit=1,
+                report_to=report_to,
+                output_dir="/kaggle/working/ckpt",
+                seed=42,
+                optim="adamw_8bit",
+            ),
+        )
 
     trainer.train()
     Path(args.out).mkdir(parents=True, exist_ok=True)
