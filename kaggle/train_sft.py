@@ -127,9 +127,9 @@ def main():
         ds = lens
     print(f"loaded {len(ds)} rows")
 
-    trainer = SFTTrainer(
+    import inspect
+    sft_kwargs = dict(
         model=model,
-        tokenizer=tokenizer,
         train_dataset=ds,
         dataset_text_field="text",
         max_seq_length=args.max_seq_len,
@@ -154,6 +154,11 @@ def main():
             optim="adamw_8bit",
         ),
     )
+    if "processing_class" in inspect.signature(SFTTrainer.__init__).parameters:
+        sft_kwargs["processing_class"] = tokenizer
+    else:
+        sft_kwargs["tokenizer"] = tokenizer
+    trainer = SFTTrainer(**sft_kwargs)
 
     trainer.train()
     Path(args.out).mkdir(parents=True, exist_ok=True)
