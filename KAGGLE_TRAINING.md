@@ -338,6 +338,8 @@ FileLink("/kaggle/working/medchat-q4.gguf")   # ~2.6 GB, the deployable artifact
 | `WARNING: Unsloth should be imported before [trl, transformers, peft]` | Fixed in current code (unsloth imported first). `git pull` to update |
 | `warmup_ratio is deprecated` | Fixed — code now computes `warmup_steps` explicitly |
 | `Skipping import of cpp extensions ... upgrade to torch >= 2.11` | Harmless but slower. Run the optional torch-upgrade line in Cell 2 |
+| `datasets.CastError ... 1 new columns ({'corruption'})` | Fixed in current code — every row now carries `category`/`corruption` (null when N/A) so the schema is uniform. `git pull` and re-run Cell 4 |
+| `HFValidationError: Repo id must be in the form ... /kaggle/working/sft_qwen3_4b` | The eval cell ran before SFT finished (checkpoint dir doesn't exist). Run Cell 4 fully, then Cell 5 |
 | `CUDA out of memory` (Cell 4) | `--batch-size 2 --grad-accum 4`; keep `--flash` OFF on T4/P100 |
 | `model load failed` | Internet dropped mid-download → re-run Cell 4; or swap `--model Qwen/Qwen3-4B-Instruct` |
 | `valid_json 0/8` (Cell 5) | Format bug → look at raw generation, re-run Cell 4 |

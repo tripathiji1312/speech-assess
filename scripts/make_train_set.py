@@ -103,18 +103,27 @@ def main():
         ex["_id"] = f"val-{i:06d}"
 
     def slim(ex):
-        out = {"_id": ex["_id"], "conversations": ex["conversations"]}
-        for meta in ("category", "corruption"):
-            if meta in ex:
-                out[meta] = ex[meta]
-        return out
+        # both metadata keys on EVERY row so HF `datasets` json builder
+        # sees a uniform schema (missing keys on some rows -> CastError)
+        return {
+            "_id": ex["_id"],
+            "conversations": ex["conversations"],
+            "category": ex.get("category"),
+            "corruption": ex.get("corruption"),
+        }
+
+    train = [slim(ex) for ex in train]
+    val = [slim(ex) for ex in val]
+    key_sets = {frozenset(r) for r in train + val}
+    if len(key_sets) != 1:
+        raise SystemExit(f"ERROR: inconsistent row schemas across final set: {key_sets}")
 
     with open(out / "train.jsonl", "w") as f:
         for ex in train:
-            f.write(json.dumps(slim(ex), ensure_ascii=False) + "\n")
+            f.write(json.dumps(ex, ensure_ascii=False) + "\n")
     with open(out / "val.jsonl", "w") as f:
         for ex in val:
-            f.write(json.dumps(slim(ex), ensure_ascii=False) + "\n")
+            f.write(json.dumps(ex, ensure_ascii=False) + "\n")
 
     def nchars(rows):
         return sum(len(m["value"]) for r in rows for m in r["conversations"])

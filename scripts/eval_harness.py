@@ -15,6 +15,7 @@ Usage (Kaggle or local GPU):
 import argparse
 import json
 import re
+from pathlib import Path
 
 
 def _load_model(checkpoint, dtype, device):
@@ -262,6 +263,13 @@ def main():
     ap.add_argument("--dtype", default="auto")
     ap.add_argument("--device", default="cuda")
     args = ap.parse_args()
+
+    if not Path(args.checkpoint).is_dir():
+        raise SystemExit(
+            f"ERROR: checkpoint dir not found: {args.checkpoint}\n"
+            "Run the SFT cell first (or export_gguf if evaluating the GGUF).")
+    if not Path(args.split).exists():
+        raise SystemExit(f"ERROR: eval split not found: {args.split}")
 
     model, tokenizer = _load_model(args.checkpoint, args.dtype, args.device)
 
