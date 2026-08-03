@@ -1,0 +1,24 @@
+{
+  "chief_complaint": "string - short phrase, only what patient said",
+  "hpi": "string - 2-4 sentence narrative of the present illness from the transcript only",
+  "vitals": {
+    "temp": "string|null",
+    "bp": "string|null",
+    "hr": "int|null",
+    "spo2": "int|null"
+  },
+  "medications": [
+    "{name, dose, frequency}"
+  ],
+  "allergies": [
+    "string"
+  ],
+  "red_flags": [
+    "string"
+  ],
+  "missing_info": [
+    "string"
+  ],
+  "urgency": "enum(emergency, urgent, routine)",
+  "escalate": "bool - true iff urgency != routine"
+}

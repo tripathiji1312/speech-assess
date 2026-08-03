@@ -1,0 +1,22 @@
+# Reference hyperparameters for SFT (QLoRA, Qwen3-4B on Kaggle T4/P100)
+model: unsloth/Qwen3-4B-Instruct
+max_seq_length: 2048
+load_in_4bit: true
+lora_r: 32
+lora_alpha: 64
+lora_dropout: 0.0
+target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
+learning_rate: 2e-4
+lr_scheduler: cosine
+num_epochs: 3
+warmup_ratio: 0.05
+per_device_batch_size: 8
+grad_accumulation: 2
+packing: false        # JSON correctness needs full attention -> never pack
+optimizer: adamw_8bit
+seed: 42
+
+# Notes
+# - T4/P100 -> fp16 (is_bfloat16_supported() is False); A100 -> bf16
+# - 3 epochs over ~20k rows ~= 2-3h on T4
+# - Phi-4-mini alternative: microsoft/Phi-4-mini-instruct (same script)

@@ -1,0 +1,18 @@
+# Reference hyperparameters for DPO stage 2 (grounded-answer preference tuning)
+model: /kaggle/working/sft_qwen3_4b
+data: dpo.jsonl (from build_grounded_qa.py --dpo)
+beta: 0.1
+lora_r: 16
+lora_alpha: 32
+learning_rate: 5e-5
+num_epochs: 1
+warmup_ratio: 0.1
+per_device_batch_size: 4
+grad_accumulation: 2
+max_length: 1024
+
+# Notes
+# - chosen  = answer grounded in the provided context (with citation)
+# - rejected = answer swapped from an unrelated topic (hallucination trap)
+# - Optionally extend to CoRFu (MediEval, ACL 2026): asymmetric loss so
+#   "unsupported claim presented as fact" is penalized harder than benign errors

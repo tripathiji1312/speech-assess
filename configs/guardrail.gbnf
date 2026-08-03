@@ -1,0 +1,15 @@
+# llama.cpp GBNF grammar for the claim-support verifier output.
+# Forces a well-formed JSON: {"issues": [...], "summary": "ok"|"issues_found"}
+# Usage: llama-cli -m model.gguf -g -grammar-file configs/guardrail.gbnf
+
+root     ::= ws "{" ws "\"issues\"" ws ":" ws array ws "," ws "\"summary\"" ws ":" ws summary ws "}"
+array    ::= "[" ws (object (ws "," ws object)*)? ws "]"
+object   ::= "{" ws pair (ws "," ws pair)* ws "}"
+pair     ::= ws "\"" key "\"" ws ":" ws value
+key      ::= "field" | "claim" | "problem" | "severity" | "evidence"
+value    ::= string | sev | problem
+string   ::= "\"" ([^"\\] | "\\" (["\\/bfnrt] | "u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F]))* "\""
+sev      ::= "\"" ("low" | "medium" | "high") "\""
+problem  ::= "\"" ("not in transcript" | "contradicts transcript" | "missing from draft") "\""
+summary  ::= "\"" ("ok" | "issues_found") "\""
+ws       ::= [ \t\n]*

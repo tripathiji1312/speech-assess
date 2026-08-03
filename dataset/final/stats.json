@@ -1,0 +1,28 @@
+{
+  "extraction": {
+    "rows": 26400,
+    "train": 24000,
+    "val": 2400
+  },
+  "guardrail": {
+    "rows": 16500,
+    "train": 15000,
+    "val": 1500
+  },
+  "grounded_qa": {
+    "rows": 2117,
+    "train": 1903,
+    "val": 214
+  },
+  "safety": {
+    "rows": 1052,
+    "train": 942,
+    "val": 110
+  },
+  "_summary": {
+    "train_rows": 41845,
+    "val_rows": 4224,
+    "train_est_tokens": 19500338,
+    "val_est_tokens": 1967375
+  }
+}

@@ -1,0 +1,271 @@
+{
+  "complaints": {
+    "abdominal_pain": [
+      "Abdominal pain",
+      "Gastroenteritis",
+      "IBS",
+      "Anal pain"
+    ],
+    "headache": [
+      "Headache",
+      "Migraine",
+      "Tension headache"
+    ],
+    "chest_pain": [
+      "Chest pain",
+      "Angina",
+      "Heart attack warning signs",
+      "Acid reflux"
+    ],
+    "shortness_of_breath": [
+      "Shortness of breath",
+      "Asthma",
+      "COPD",
+      "Pneumonia"
+    ],
+    "fever": [
+      "Fever",
+      "Flu",
+      "Infection",
+      "Elevated liver enzymes"
+    ],
+    "cough": [
+      "Cough",
+      "Bronchitis",
+      "Pneumonia",
+      "Asthma"
+    ],
+    "dizziness": [
+      "Dizziness",
+      "Vertigo",
+      "Anemia"
+    ],
+    "back_pain": [
+      "Back pain",
+      "Sciatica",
+      "Muscle strain"
+    ],
+    "nausea_vomiting": [
+      "Nausea and vomiting",
+      "Gastroenteritis",
+      "Dehydration"
+    ],
+    "rash": [
+      "Rash",
+      "Allergic reaction",
+      "Eczema"
+    ],
+    "sore_throat": [
+      "Sore throat",
+      "Strep throat",
+      "Tonsillitis"
+    ],
+    "joint_pain": [
+      "Joint pain",
+      "Arthritis",
+      "Gout"
+    ],
+    "uti": [
+      "Urinary tract infection",
+      "UTI symptoms",
+      "Kidney infection"
+    ],
+    "leg_swelling": [
+      "Leg swelling",
+      "Deep vein thrombosis",
+      "Edema"
+    ],
+    "palpitations": [
+      "Palpitations",
+      "Arrhythmia",
+      "Anxiety"
+    ],
+    "insomnia": [
+      "Insomnia",
+      "Sleep hygiene",
+      "Anxiety"
+    ],
+    "ear_pain": [
+      "Ear pain",
+      "Ear infection",
+      "Otitis media"
+    ]
+  },
+  "medications": {
+    "Lisinopril": [
+      "Lisinopril",
+      "Medication information",
+      "Side effects"
+    ],
+    "Metformin": [
+      "Metformin",
+      "Medication information",
+      "Side effects"
+    ],
+    "Ibuprofen": [
+      "Ibuprofen",
+      "Medication information",
+      "Side effects"
+    ],
+    "Acetaminophen": [
+      "Acetaminophen",
+      "Medication information",
+      "Side effects"
+    ],
+    "Amoxicillin": [
+      "Amoxicillin",
+      "Medication information",
+      "Side effects"
+    ],
+    "Atorvastatin": [
+      "Atorvastatin",
+      "Medication information",
+      "Side effects"
+    ],
+    "Omeprazole": [
+      "Omeprazole",
+      "Medication information",
+      "Side effects"
+    ],
+    "Albuterol inhaler": [
+      "Albuterol inhaler",
+      "Medication information",
+      "Side effects"
+    ],
+    "Metoprolol": [
+      "Metoprolol",
+      "Medication information",
+      "Side effects"
+    ],
+    "Levothyroxine": [
+      "Levothyroxine",
+      "Medication information",
+      "Side effects"
+    ],
+    "Amlodipine": [
+      "Amlodipine",
+      "Medication information",
+      "Side effects"
+    ],
+    "Losartan": [
+      "Losartan",
+      "Medication information",
+      "Side effects"
+    ],
+    "Gabapentin": [
+      "Gabapentin",
+      "Medication information",
+      "Side effects"
+    ],
+    "Sertraline": [
+      "Sertraline",
+      "Medication information",
+      "Side effects"
+    ],
+    "Prednisone": [
+      "Prednisone",
+      "Medication information",
+      "Side effects"
+    ],
+    "Azithromycin": [
+      "Azithromycin",
+      "Medication information",
+      "Side effects"
+    ],
+    "Cetirizine": [
+      "Cetirizine",
+      "Medication information",
+      "Side effects"
+    ],
+    "Loratadine": [
+      "Loratadine",
+      "Medication information",
+      "Side effects"
+    ],
+    "Ondansetron": [
+      "Ondansetron",
+      "Medication information",
+      "Side effects"
+    ],
+    "Furosemide": [
+      "Furosemide",
+      "Medication information",
+      "Side effects"
+    ],
+    "Hydrochlorothiazide": [
+      "Hydrochlorothiazide",
+      "Medication information",
+      "Side effects"
+    ],
+    "Rosuvastatin": [
+      "Rosuvastatin",
+      "Medication information",
+      "Side effects"
+    ],
+    "Duloxetine": [
+      "Duloxetine",
+      "Medication information",
+      "Side effects"
+    ],
+    "Pregabalin": [
+      "Pregabalin",
+      "Medication information",
+      "Side effects"
+    ],
+    "Sumatriptan": [
+      "Sumatriptan",
+      "Medication information",
+      "Side effects"
+    ],
+    "Fluticasone nasal spray": [
+      "Fluticasone nasal spray",
+      "Medication information",
+      "Side effects"
+    ],
+    "Montelukast": [
+      "Montelukast",
+      "Medication information",
+      "Side effects"
+    ],
+    "Doxycycline": [
+      "Doxycycline",
+      "Medication information",
+      "Side effects"
+    ],
+    "Naproxen": [
+      "Naproxen",
+      "Medication information",
+      "Side effects"
+    ],
+    "Meloxicam": [
+      "Meloxicam",
+      "Medication information",
+      "Side effects"
+    ],
+    "Warfarin": [
+      "Warfarin",
+      "Medication information",
+      "Side effects"
+    ],
+    "Clopidogrel": [
+      "Clopidogrel",
+      "Medication information",
+      "Side effects"
+    ],
+    "Insulin glargine": [
+      "Insulin glargine",
+      "Medication information",
+      "Side effects"
+    ],
+    "Salmeterol inhaler": [
+      "Salmeterol inhaler",
+      "Medication information",
+      "Side effects"
+    ],
+    "Calcium carbonate": [
+      "Calcium carbonate",
+      "Medication information",
+      "Side effects"
+    ]
+  }
+}
