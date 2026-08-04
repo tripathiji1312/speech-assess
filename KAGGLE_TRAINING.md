@@ -3,7 +3,9 @@
 Full pipeline on a free Kaggle GPU:
 **SFT (QLoRA Qwen3-4B) → DPO (hallucination reduction) → GGUF Q4_K_M export → on-device smoke test.**
 
-Expected time on a T4 (free tier): **~4-6 h total** (SFT ~3-4 h, DPO ~20-30 min, export ~10 min).
+Measured time (T4 x2, Aug 2026): **~16 s/step ≈ 12 h per SFT epoch on 1 GPU, ~6 h on 2 GPUs.**
+Kaggle caps a GPU session at ~9 h (30 h/week), so a 3-epoch single-GPU run (~36 h) **cannot finish** —
+use the Cell 4 2-GPU command with `--epochs 1` (~6 h), then DPO ~20-30 min + export ~10 min.
 Every cell is self-contained (absolute paths, no `cd` needed) — copy each block into its own notebook cell exactly as written.
 
 ---
@@ -96,22 +98,38 @@ Expected output:
 /kaggle/working/medchat/dataset/dpo.jsonl: 1047 rows
 ```
 
-### Cell 4 — SFT stage (Qwen3-4B QLoRA, ~3-4 h on T4)
+### Cell 4 — SFT stage (Qwen3-4B QLoRA, both T4s, 1 epoch ≈ 6 h)
+
+**Recommended (T4 x2):** torchrun uses both GPUs (effective batch = 4 × 2 GPUs × 2 accum = 16, same as the runbook's original settings). `--epochs 1` is the practical max per session — see the note below.
+
+```bash
+!torchrun --standalone --nproc_per_node=2 /kaggle/working/medchat/kaggle/train_sft.py \
+    --data /kaggle/working/medchat/dataset/final/train.jsonl \
+    --model Qwen/Qwen3-4B-Instruct-2507 \
+    --out /kaggle/working/sft_qwen3_4b \
+    --epochs 1 --lr 2e-4 \
+    --batch-size 4 --grad-accum 2 --max-seq-len 2048
+```
+
+**1-GPU fallback (P100 or single T4):** same flags via `python`, but ~12 h/epoch — plan one epoch per session:
 
 ```bash
 !python /kaggle/working/medchat/kaggle/train_sft.py \
     --data /kaggle/working/medchat/dataset/final/train.jsonl \
     --model Qwen/Qwen3-4B-Instruct-2507 \
     --out /kaggle/working/sft_qwen3_4b \
-    --epochs 3 --lr 2e-4 \
+    --epochs 1 --lr 2e-4 \
     --batch-size 4 --grad-accum 2 --max-seq-len 2048
 ```
 
-What you should see: `dtype: fp16` (T4/P100) or `bf16` (L4/A100+), `loaded 41845 rows`, per-epoch loss decreasing (~2.0 → ~1.3).
+What you should see: `dtype: fp16` (T4/P100) or `bf16` (L4/A100+), `loaded 41845 rows`, and with torchrun a `Data Parallel GPUs = 2` banner. Unsloth auto-doubles the batch size to fill VRAM, so the step count you see is ~half of the naive `rows / (batch × accum)` estimate — expected, not a bug. Per-epoch loss should decrease (~2.0 → ~1.3).
+
+> **Why `--epochs 1`?** 3 epochs measured at ~36 h — above Kaggle's ~9 h session cap and 30 h/week quota. 1 epoch = ~19.5M tokens ≈ 5x model size, which is enough for format tuning; the Cell 5 eval gate decides if you ever need more. **No resume support** (script calls `trainer.train()` fresh), so a killed session restarts from scratch — a 2-GPU 1-epoch run fits comfortably in one session.
 
 Troubleshoot:
 - **Out of memory?** → `--batch-size 2 --grad-accum 4`
 - **L4/A100 GPU?** → add `--flash`
+- **torchrun not found / spawn errors?** → re-run Cell 2 (torchrun ships with torch 2.10.0+cu128); if it persists, fall back to the 1-GPU command above.
 
 Output: merged 16-bit model in `/kaggle/working/sft_qwen3_4b/`.
 
@@ -223,7 +241,7 @@ run = wandb.init(
     config={
         "base_model": "Qwen/Qwen3-4B-Instruct-2507",
         "quant": "q4_k_m",
-        "sft_epochs": 3,
+        "sft_epochs": 1,  # set to what you actually ran in Cell 4
         "sft_lr": 2e-4,
         "dpo_beta": 0.1,
         "dpo_epochs": 1,
@@ -366,7 +384,7 @@ FileLink("/kaggle/working/medchat-q4.gguf")   # ~2.6 GB, the deployable artifact
 | `valid_json 0/8` (Cell 5) | Format bug → look at raw generation, re-run Cell 4 |
 | DPO `KeyError` | trl too old → re-run Cell 2, restart kernel |
 | GGUF smoke test prints JSON + noise | llama.cpp too old → `!pip install -U llama-cpp-python`; ensure `enable_thinking=False` |
-| Session quota ended mid-run | Re-create notebook → run Cell 1 + Cell 2 → continue from the next stage; re-download model outputs you already have |
+| Session quota ended mid-run | No resume support — a killed run restarts from scratch. Re-create notebook → Cell 1 + Cell 2 → re-run Cell 4 (use the 2-GPU `--epochs 1` command so it fits in one ~9 h session) |
 | Slow training on P100 | Expected (~40% slower than T4); same commands work |
 
 ## 4. Hyperparameters (why these)
@@ -376,7 +394,7 @@ FileLink("/kaggle/working/medchat-q4.gguf")   # ~2.6 GB, the deployable artifact
 | base model | Qwen3-4B-Instruct-2507 | 4B-class SOTA, MIT license, strong instruction follow |
 | QLoRA r / α | 32 / 64 | good capacity for format tasks; α=2r standard |
 | lr / schedule | 2e-4 / cosine | QLoRA default; warmup 5% |
-| epochs | 3 | 42k rows ≈ 19.5M tokens × 3 ≈ 58M ≈ 14x model size (rule of thumb) |
+| epochs | 1 (per session) | 42k rows ≈ 19.5M tokens ≈ 5x model size; measured ~6 h/epoch on T4 x2, ~12 h on 1 T4 — 3 epochs (~36 h) exceed Kaggle's ~9 h session cap. No resume support, so each session starts fresh; re-run Cell 4 with more epochs only if the Cell 5 gate fails |
 | packing | OFF | JSON outputs need clean per-example attention, not concatenation |
 | SFT engine | transformers.Trainer (pre-tokenized) | avoids trl's multiprocess pickling crash; prompt masked (loss only on model output) |
 | fp16 on T4/P100 | forced | bf16 unsupported below Ampere |

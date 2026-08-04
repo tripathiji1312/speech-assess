@@ -54,8 +54,10 @@ The Mayo/WebMD corpus you already have becomes the **retrieval KB**, not the tra
 
 ## Training (Kaggle)
 
-1. `kaggle/train_sft.py` — QLoRA (r=32, α=64, 4-bit) on **Qwen3-4B**, 3 epochs, lr 2e-4, cosine,
-   packing OFF (JSON correctness needs full attention), ChatML format. ~2-3h on T4 GPU.
+1. `kaggle/train_sft.py` — QLoRA (r=32, α=64, 4-bit) on **Qwen3-4B**, 1 epoch, lr 2e-4, cosine,
+   packing OFF (JSON correctness needs full attention), ChatML format. Measured ~12h/epoch on 1 T4,
+   ~6h on T4 x2 via `torchrun --standalone --nproc_per_node=2` (3 epochs ~36h exceed Kaggle's ~9h
+   session cap; no resume support).
    Alternative base: Phi-4-mini (3.8B, MIT) — switch via config.
 2. `kaggle/dpo_stage2.py` — DPO on split D with asymmetric safety penalty (CoRFu-style):
    hallucinated-fact responses punished harder than minor errors.

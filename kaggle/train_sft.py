@@ -21,7 +21,9 @@ Why plain transformers.Trainer instead of trl.SFTTrainer:
     (labels=-100 on the instruction part) - faster and no crash.
   - import order: unsloth MUST be imported before trl/transformers/peft.
 
-Expected: ~42k rows, 3 epochs, lr 2e-4 -> roughly 3-4h on a T4.
+Expected: ~42k rows, 1 epoch, lr 2e-4 -> measured ~12h/epoch on 1 T4, ~6h on T4 x2
+(torchrun --standalone --nproc_per_node=2). 3 epochs (~36h) exceed Kaggle's ~9h
+session cap, so the default is 1 epoch; training has no resume support.
 """
 
 import argparse
@@ -133,7 +135,7 @@ def main():
     ap.add_argument("--lora-r", type=int, default=32)
     ap.add_argument("--lora-alpha", type=int, default=64)
     ap.add_argument("--lr", type=float, default=2e-4)
-    ap.add_argument("--epochs", type=float, default=3.0)
+    ap.add_argument("--epochs", type=float, default=1.0)
     ap.add_argument("--batch-size", type=int, default=4)
     ap.add_argument("--grad-accum", type=int, default=2)
     ap.add_argument("--warmup-ratio", type=float, default=0.05)
