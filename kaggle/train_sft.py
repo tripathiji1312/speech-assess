@@ -7,7 +7,7 @@ Kaggle setup:
                  https://download.pytorch.org/whl/cu128 \
                  "torch==2.10.0+cu128" "unsloth==2026.8.2" "transformers==5.5.0" \
                  "trl==0.24.0" "peft==0.20.0" "bitsandbytes==0.50.0" \
-                 "accelerate==1.10.1" "datasets==4.3.0" "xformers==0.0.35"
+                 "accelerate==1.10.1" "datasets==4.3.0" "xformers==0.0.35" "wandb==0.28.1"
     4. Run this script with the right --data path
 
 Usage:
@@ -40,7 +40,7 @@ except ImportError:
     subprocess.run([sys.executable, "-m", "pip", "install", "-q",
                     "unsloth==2026.8.2", "transformers==5.5.0", "trl==0.24.0",
                     "peft==0.20.0", "bitsandbytes==0.50.0", "accelerate==1.10.1",
-                    "datasets==4.3.0", "xformers==0.0.35"], check=True)
+                    "datasets==4.3.0", "xformers==0.0.35", "wandb==0.28.1"], check=True)
     import torch
     from unsloth import FastLanguageModel, is_bfloat16_supported
     from datasets import Features, Value, load_dataset

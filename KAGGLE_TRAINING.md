@@ -47,7 +47,8 @@ dataset/  kaggle/  scripts/  configs/  KAGGLE_TRAINING.md  PLAN.md  README.md  .
 ```python
 # Pinned to the exact versions validated against each other (Aug 2026):
 #   unsloth 2026.8.2 + transformers 5.5.0 + trl 0.24.0 (+ peft 0.20.0, bitsandbytes
-#   0.50.0, accelerate 1.10.1, datasets 4.3.0, xformers 0.0.35, torch 2.10.0+cu128).
+#   0.50.0, accelerate 1.10.1, datasets 4.3.0, xformers 0.0.35, wandb 0.28.1,
+#   torch 2.10.0+cu128).
 # Do NOT unpin: e.g. 'pip install -U trl' would pull trl 1.9.2, which unsloth rejects.
 !pip install -q --no-warn-script-location --extra-index-url https://download.pytorch.org/whl/cu128 \
     "torch==2.10.0+cu128" \
@@ -59,6 +60,7 @@ dataset/  kaggle/  scripts/  configs/  KAGGLE_TRAINING.md  PLAN.md  README.md  .
     "accelerate==1.10.1" \
     "datasets==4.3.0" \
     "xformers==0.0.35" \
+    "wandb==0.28.1" \
     scikit-learn
 !pip install -q --no-warn-script-location llama-cpp-python
 ```
