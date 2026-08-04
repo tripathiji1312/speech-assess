@@ -27,10 +27,14 @@ Your repo `https://github.com/tripathiji1312/speech-assess` is public and contai
 ### Cell 1 — Clone the repo (code + dataset in one step)
 
 ```bash
-!cd /kaggle/working && git clone https://github.com/tripathiji1312/speech-assess.git medchat
+!rm -rf /kaggle/working/medchat && cd /kaggle/working && \
+  git clone --depth 1 https://github.com/tripathiji1312/speech-assess.git medchat
 !ls /kaggle/working/medchat
 !du -sh /kaggle/working/medchat/dataset/final/
 ```
+
+> The `rm -rf` is essential — it guarantees a **fresh copy every run** so stale
+> scripts/dataset can't silently keep running the old code.
 
 Expected output:
 ```
@@ -338,7 +342,10 @@ FileLink("/kaggle/working/medchat-q4.gguf")   # ~2.6 GB, the deployable artifact
 | `WARNING: Unsloth should be imported before [trl, transformers, peft]` | Fixed in current code (unsloth imported first). `git pull` to update |
 | `warmup_ratio is deprecated` | Fixed — code now computes `warmup_steps` explicitly |
 | `Skipping import of cpp extensions ... upgrade to torch >= 2.11` | Harmless but slower. Run the optional torch-upgrade line in Cell 2 |
-| `datasets.CastError ... 1 new columns ({'corruption'})` | Fixed in current code — every row now carries `category`/`corruption` (null when N/A) so the schema is uniform. `git pull` and re-run Cell 4 |
+| `datasets.CastError ... 1 new columns ({'corruption'})` | Fixed — `category`/`corruption` now exist on every row |
+| `TypeError: Couldn't cast array of type string to null` (train.jsonl) | Fixed — metadata is now sentinel strings (`"none"`), never null, and the loader declares explicit `Features`; `git pull` and re-run Cell 4 |
+| Loss jumps / model learns the prompt | Fixed — data collator now preserves the `-100` prompt mask (`DataCollatorForLanguageModeling` was overwriting labels with input_ids); `git pull` |
+| `Trainer.__init__() got an unexpected keyword argument 'tokenizer'` | Fixed — code uses `processing_class` (transformers 5.x) with a `tokenizer=` fallback |
 | `HFValidationError: Repo id must be in the form ... /kaggle/working/sft_qwen3_4b` | The eval cell ran before SFT finished (checkpoint dir doesn't exist). Run Cell 4 fully, then Cell 5 |
 | `CUDA out of memory` (Cell 4) | `--batch-size 2 --grad-accum 4`; keep `--flash` OFF on T4/P100 |
 | `model load failed` | Internet dropped mid-download → re-run Cell 4; or swap `--model Qwen/Qwen3-4B-Instruct` |

@@ -67,6 +67,13 @@ def main():
         use_gradient_checkpointing="unsloth", random_state=42,
     )
 
+    # Same thinking-mode pin as train_sft: trl applies the chat template
+    # internally, so set it on the tokenizer (used as processing_class).
+    try:
+        tokenizer.chat_template_kwargs = {"enable_thinking": False}
+    except Exception:
+        pass
+
     raw = [json.loads(l) for l in open(args.data) if l.strip()]
 
     def msgs(system, text):

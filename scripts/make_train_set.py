@@ -103,13 +103,14 @@ def main():
         ex["_id"] = f"val-{i:06d}"
 
     def slim(ex):
-        # both metadata keys on EVERY row so HF `datasets` json builder
-        # sees a uniform schema (missing keys on some rows -> CastError)
+        # category/corruption are STRINGS on every row (sentinel "none" when
+        # N/A). Never null: an all-null column makes HF `datasets` infer a
+        # "null" type it cannot cast to string later -> CastError/TypeError.
         return {
             "_id": ex["_id"],
             "conversations": ex["conversations"],
-            "category": ex.get("category"),
-            "corruption": ex.get("corruption"),
+            "category": ex.get("category") or "none",
+            "corruption": ex.get("corruption") or "none",
         }
 
     train = [slim(ex) for ex in train]

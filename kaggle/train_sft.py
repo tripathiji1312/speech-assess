@@ -29,16 +29,16 @@ from pathlib import Path
 try:
     import torch
     from unsloth import FastLanguageModel, is_bfloat16_supported  # noqa: E402 - must be before trl/transformers
-    from datasets import load_dataset
-    from transformers import DataCollatorForLanguageModeling, Trainer, TrainingArguments
+    from datasets import Features, Value, load_dataset
+    from transformers import Trainer, TrainingArguments
 except ImportError:
     print("Missing deps, installing unsloth + friends...")
     subprocess.run([sys.executable, "-m", "pip", "install", "-q",
                     "unsloth", "trl", "datasets", "accelerate", "peft"], check=True)
     import torch
     from unsloth import FastLanguageModel, is_bfloat16_supported
-    from datasets import load_dataset
-    from transformers import DataCollatorForLanguageModeling, Trainer, TrainingArguments
+    from datasets import Features, Value, load_dataset
+    from transformers import Trainer, TrainingArguments
 
 
 def to_messages(conversations):
@@ -70,6 +70,60 @@ def make_tokens(tokenizer):
     return fn
 
 
+def make_collator(tokenizer):
+    """Pad a batch to the longest sequence WITHOUT touching the pre-masked
+    labels. NOT DataCollatorForLanguageModeling: its mlm=False branch
+    overwrites labels with input_ids, silently destroying the -100 prompt
+    mask (loss would include the prompt). Padding ids with eos/pad, labels
+    with -100 so padded positions cost nothing."""
+    pad_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id
+
+    def collate(batch):
+        n = max(len(r["input_ids"]) for r in batch)
+        input_ids, attention_mask, labels = [], [], []
+        for r in batch:
+            ids, lab = r["input_ids"], r["labels"]
+            k = n - len(ids)
+            input_ids.append(ids + [pad_id] * k)
+            attention_mask.append([1] * len(ids) + [0] * k)
+            labels.append(lab + [-100] * k)
+        return {
+            "input_ids": torch.tensor(input_ids, dtype=torch.long),
+            "attention_mask": torch.tensor(attention_mask, dtype=torch.long),
+            "labels": torch.tensor(labels, dtype=torch.long),
+        }
+    return collate
+
+
+def validate_rows(path, n=500):
+    """Fail with an actionable message BEFORE the HF json builder, whose
+    schema inference turns all-null columns into a 'null' type it then
+    cannot cast to string ('Couldn't cast array of type string to null')."""
+    rows = []
+    with open(path) as f:
+        for i, line in enumerate(f):
+            if i >= n:
+                break
+            line = line.strip()
+            if line:
+                rows.append(json.loads(line))
+    if not rows:
+        raise SystemExit(f"ERROR: {path} is empty or unreadable")
+    keys = {frozenset(r) for r in rows}
+    if len(keys) != 1:
+        raise SystemExit(
+            "ERROR: rows have mixed columns %s. Regenerate with "
+            "scripts/make_train_set.py (older files had inconsistent schemas)." % (keys,))
+    bad = [r["_id"] for r in rows
+           if r.get("category") is None or r.get("corruption") is None]
+    if bad:
+        raise SystemExit(
+            "ERROR: rows have null category/corruption (%s). This is the old "
+            "schema that crashes HF datasets ('string to null'). Regenerate: "
+            "python scripts/make_train_set.py -o dataset/final" % bad[0])
+    return rows[0]
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--data", default="/kaggle/working/medchat/dataset/final/train.jsonl")
@@ -89,6 +143,7 @@ def main():
     data_path = Path(args.data)
     if not data_path.exists():
         raise SystemExit(f"ERROR: {data_path} not found. Fix --data.")
+    validate_rows(data_path)
 
     fp16 = not is_bfloat16_supported()  # T4/P100 -> fp16
     print(f"dtype: {'bf16' if not fp16 else 'fp16'}")
@@ -110,6 +165,14 @@ def main():
     if model is None:
         raise SystemExit("model load failed")
 
+    # Qwen3's chat template defaults to thinking mode; training data has no
+    # reasoning block and eval generates with enable_thinking=False. Pin the
+    # template here so train-time tokenization matches eval-time generation.
+    try:
+        tokenizer.chat_template_kwargs = {"enable_thinking": False}
+    except Exception:
+        pass
+
     model = FastLanguageModel.get_peft_model(
         model,
         r=args.lora_r,
@@ -122,7 +185,13 @@ def main():
         random_state=42,
     )
 
-    ds = load_dataset("json", data_files=str(data_path))["train"]
+    features = Features({
+        "_id": Value("string"),
+        "conversations": [{"from": Value("string"), "value": Value("string")}],
+        "category": Value("string"),
+        "corruption": Value("string"),
+    })
+    ds = load_dataset("json", data_files=str(data_path), features=features)["train"]
     ds = ds.map(format_row(tokenizer), remove_columns=ds.column_names)
     ds = ds.map(make_tokens(tokenizer), remove_columns=ds.column_names)
 
@@ -139,31 +208,34 @@ def main():
     warmup_steps = int(total_steps * args.warmup_ratio)
     print(f"~{total_steps} steps total, warmup {warmup_steps}")
 
-    trainer = Trainer(
-        model=model,
-        tokenizer=tokenizer,
-        train_dataset=ds,
-        data_collator=DataCollatorForLanguageModeling(tokenizer, mlm=False),
-        args=TrainingArguments(
-            per_device_train_batch_size=args.batch_size,
-            gradient_accumulation_steps=args.grad_accum,
-            num_train_epochs=args.epochs,
-            learning_rate=args.lr,
-            lr_scheduler_type="cosine",
-            warmup_steps=warmup_steps,
-            max_grad_norm=1.0,
-            fp16=fp16,
-            bf16=not fp16,
-            logging_steps=20,
-            save_strategy="epoch",
-            save_total_limit=1,
-            report_to="none",
-            output_dir="/kaggle/working/ckpt",
-            seed=42,
-            optim="adamw_8bit",
-            dataloader_num_workers=2,
-        ),
+    # transformers >=5 removed Trainer(tokenizer=...) -> processing_class
+    train_args = TrainingArguments(
+        per_device_train_batch_size=args.batch_size,
+        gradient_accumulation_steps=args.grad_accum,
+        num_train_epochs=args.epochs,
+        learning_rate=args.lr,
+        lr_scheduler_type="cosine",
+        warmup_steps=warmup_steps,
+        max_grad_norm=1.0,
+        fp16=fp16,
+        bf16=not fp16,
+        logging_steps=20,
+        save_strategy="epoch",
+        save_total_limit=1,
+        report_to="none",
+        output_dir="/kaggle/working/ckpt",
+        seed=42,
+        optim="adamw_8bit",
+        dataloader_num_workers=0,
     )
+    try:
+        trainer = Trainer(model=model, processing_class=tokenizer,
+                          train_dataset=ds, data_collator=make_collator(tokenizer),
+                          args=train_args)
+    except TypeError:
+        trainer = Trainer(model=model, tokenizer=tokenizer,
+                          train_dataset=ds, data_collator=make_collator(tokenizer),
+                          args=train_args)
 
     trainer.train()
     Path(args.out).mkdir(parents=True, exist_ok=True)
