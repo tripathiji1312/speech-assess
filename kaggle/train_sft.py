@@ -342,10 +342,15 @@ def main():
         _force_nonreentrant_checkpointing(model)
 
     trainer.train()
-    Path(args.out).mkdir(parents=True, exist_ok=True)
-    model.save_pretrained_merged(args.out, tokenizer, save_method="merged_16bit")
-    tokenizer.save_pretrained(args.out)
-    print(f"saved merged model -> {args.out}")
+    if int(os.environ.get("LOCAL_RANK", "0")) == 0:
+        # save_pretrained_merged downloads the original shards into args.out and
+        # overwrites them in place. Running it on BOTH ranks races on the same
+        # files (FileNotFoundError on the shards, seen in the 5th smoke test);
+        # rank 0 only. Rank 1 exits normally; no collectives are involved.
+        Path(args.out).mkdir(parents=True, exist_ok=True)
+        model.save_pretrained_merged(args.out, tokenizer, save_method="merged_16bit")
+        tokenizer.save_pretrained(args.out)
+        print(f"saved merged model -> {args.out}")
 
 
 if __name__ == "__main__":
