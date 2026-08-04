@@ -24,6 +24,11 @@ Why plain transformers.Trainer instead of trl.SFTTrainer:
 Expected: ~42k rows, 1 epoch, lr 2e-4 -> measured ~12h/epoch on 1 T4, ~6h on T4 x2
 (torchrun --standalone --nproc_per_node=2). 3 epochs (~36h) exceed Kaggle's ~9h
 session cap, so the default is 1 epoch; training has no resume support.
+
+Multi-GPU (torchrun) REQUIRES native non-reentrant gradient checkpointing
+(use_gradient_checkpointing=True): unsloth's reentrant smart GC ("unsloth")
+crashes DDP on the first backward with "marked as ready twice"
+(unsloth issue #3713; the merged fix PR #3751 only covers the VLM path).
 """
 
 import argparse
@@ -140,6 +145,13 @@ def main():
     ap.add_argument("--grad-accum", type=int, default=2)
     ap.add_argument("--warmup-ratio", type=float, default=0.05)
     ap.add_argument("--flash", action="store_true", help="try flash attention (Ampere+ only)")
+    # Smoke-test knobs: cap training at N optimizer steps and log every step so a
+    # multi-GPU DDP fix can be verified in ~10 min BEFORE the ~6h full run.
+    # Defaults (-1 / 20) keep production behavior byte-identical.
+    ap.add_argument("--max-steps", type=int, default=-1,
+                    help="stop after N optimizer steps (-1 = epoch-based; >0 overrides --epochs)")
+    ap.add_argument("--logging-steps", type=int, default=20,
+                    help="log loss every N steps (use 1 with --max-steps for smoke tests)")
     args = ap.parse_args()
 
     data_path = Path(args.data)
@@ -183,7 +195,11 @@ def main():
         lora_alpha=args.lora_alpha,
         lora_dropout=0,
         bias="none",
-        use_gradient_checkpointing="unsloth",
+        # Native non-reentrant GC is REQUIRED for multi-GPU: unsloth's reentrant
+        # smart GC ("unsloth") crashes DDP on the first backward with
+        # "marked as ready twice" (unsloth issue #3713; PR #3751 fixes only VLM).
+        # True = unpatch smart GC -> transformers 5.5.0 native GC (use_reentrant=False).
+        use_gradient_checkpointing=True,
         random_state=42,
     )
 
@@ -217,6 +233,7 @@ def main():
         per_device_train_batch_size=args.batch_size,
         gradient_accumulation_steps=args.grad_accum,
         num_train_epochs=args.epochs,
+        max_steps=args.max_steps,  # -1 = epoch-based (prod); >0 overrides epochs (smoke test)
         learning_rate=args.lr,
         lr_scheduler_type="cosine",
         warmup_steps=warmup_steps,
@@ -224,7 +241,8 @@ def main():
         average_tokens_across_devices=False,  # unsloth bug workaround: avoids 'int' loss on multi-GPU (issue #3769)
         fp16=fp16,
         bf16=not fp16,
-        logging_steps=20,
+        logging_steps=args.logging_steps,
+        logging_first_step=args.max_steps > 0,  # force a loss line at step 1 in smoke tests
         save_strategy="epoch",
         save_total_limit=1,
         report_to="none",
