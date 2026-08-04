@@ -1,7 +1,11 @@
 """Kaggle: merge LoRA + export GGUF Q4_K_M for llama.cpp on-device deployment.
 
 Usage:
-    !pip install -q unsloth
+    !pip install -q --no-warn-script-location --extra-index-url \
+        https://download.pytorch.org/whl/cu128 \
+        "torch==2.10.0+cu128" "unsloth==2026.8.2" "transformers==5.5.0" \
+        "trl==0.24.0" "peft==0.20.0" "bitsandbytes==0.50.0" \
+        "accelerate==1.10.1" "datasets==4.3.0" "xformers==0.0.35"
     python export_gguf.py --model /kaggle/working/sft_dpo --out /kaggle/working/medchat-q4.gguf
 """
 
@@ -13,7 +17,10 @@ try:
     from unsloth import FastLanguageModel
 except ImportError:
     print("installing unsloth...")
-    subprocess.run([sys.executable, "-m", "pip", "install", "-q", "unsloth"], check=True)
+    subprocess.run([sys.executable, "-m", "pip", "install", "-q",
+                    "unsloth==2026.8.2", "transformers==5.5.0", "trl==0.24.0",
+                    "peft==0.20.0", "bitsandbytes==0.50.0", "accelerate==1.10.1",
+                    "datasets==4.3.0", "xformers==0.0.35"], check=True)
     from unsloth import FastLanguageModel
 
 

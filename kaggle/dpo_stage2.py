@@ -4,7 +4,11 @@ Trains the SFT model to prefer grounded answers (with citation) over
 ungrounded/hallucinated ones. This is the main hallucination reducer.
 
 Kaggle setup:
-    !pip install -q unsloth "peft==0.15.2" trl datasets
+    !pip install -q --no-warn-script-location --extra-index-url \
+        https://download.pytorch.org/whl/cu128 \
+        "torch==2.10.0+cu128" "unsloth==2026.8.2" "transformers==5.5.0" \
+        "trl==0.24.0" "peft==0.20.0" "bitsandbytes==0.50.0" \
+        "accelerate==1.10.1" "datasets==4.3.0" "xformers==0.0.35"
     python dpo_stage2.py --model /kaggle/working/sft_qwen3_4b \
         --data /kaggle/input/medchat-final/dpo.jsonl --out /kaggle/working/sft_dpo
 """
@@ -23,7 +27,9 @@ try:
 except ImportError:
     print("Missing deps, installing...")
     subprocess.run([sys.executable, "-m", "pip", "install", "-q",
-                    "unsloth", "trl", "datasets", "accelerate", "peft"], check=True)
+                    "unsloth==2026.8.2", "transformers==5.5.0", "trl==0.24.0",
+                    "peft==0.20.0", "bitsandbytes==0.50.0", "accelerate==1.10.1",
+                    "datasets==4.3.0", "xformers==0.0.35"], check=True)
     import torch
     from unsloth import FastLanguageModel, is_bfloat16_supported
     from datasets import Dataset
@@ -43,6 +49,29 @@ def main():
     ap.add_argument("--wandb", action="store_true", help="log to Weights & Biases")
     ap.add_argument("--wandb-project", default="medchat-edge")
     args = ap.parse_args()
+
+    # Fail fast with an actionable message instead of transformers' misleading
+    # "Repo id must be in the form 'repo_name' or 'namespace/repo_name'" error,
+    # which is raised whenever the dir does not exist. Only local paths are
+    # validated; hub ids (e.g. Qwen/Qwen3-4B-Instruct-2507) pass through.
+    if args.model.startswith(("/", ".", "~")):
+        mp = Path(args.model)
+        if not mp.is_dir():
+            raise SystemExit(
+                f"[DPO] Model directory not found: {args.model}\n"
+                "The SFT stage must run in THIS session (or its output copied in) - "
+                "/kaggle/working is wiped between sessions.\n"
+                "Re-run the SFT notebook first (Cell 4), then this DPO notebook.")
+        if not (mp / "config.json").is_file():
+            raise SystemExit(
+                f"[DPO] {args.model} exists but has no config.json "
+                "(empty/partial dir). Re-run the SFT stage.")
+        if not any(mp.glob("model*.safetensors")) and not (mp / "pytorch_model.bin").is_file():
+            raise SystemExit(
+                f"[DPO] {args.model} has config.json but no weight files. "
+                "Re-run the SFT stage.")
+    if not Path(args.data).exists():
+        raise SystemExit(f"[DPO] Data file not found: {args.data}")
 
     report_to = "none"
     if args.wandb:
@@ -113,6 +142,7 @@ def main():
         learning_rate=args.lr,
         lr_scheduler_type="cosine",
         max_grad_norm=1.0,
+            average_tokens_across_devices=False,  # defensive: matches train_sft (unsloth issue #3769)
             fp16=fp16,
             bf16=not fp16,
             warmup_steps=warmup_steps,

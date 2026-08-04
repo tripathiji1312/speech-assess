@@ -45,14 +45,26 @@ dataset/  kaggle/  scripts/  configs/  KAGGLE_TRAINING.md  PLAN.md  README.md  .
 ### Cell 2 — Install dependencies (one-time, ~2-6 min)
 
 ```python
-# OPTIONAL but recommended: torch >= 2.11 unlocks unsloth's fast kernels (2x speed).
-# If it fails, training still works — just slower. (Kaggle ships torch 2.10.)
-!pip install -q -U torch --index-url https://download.pytorch.org/whl/cu128 || echo "torch upgrade skipped - continuing"
-
-!pip install -q --no-warn-script-location -U unsloth trl datasets accelerate peft bitsandbytes scikit-learn
+# Pinned to the exact versions validated against each other (Aug 2026):
+#   unsloth 2026.8.2 + transformers 5.5.0 + trl 0.24.0 (+ peft 0.20.0, bitsandbytes
+#   0.50.0, accelerate 1.10.1, datasets 4.3.0, xformers 0.0.35, torch 2.10.0+cu128).
+# Do NOT unpin: e.g. 'pip install -U trl' would pull trl 1.9.2, which unsloth rejects.
+!pip install -q --no-warn-script-location --extra-index-url https://download.pytorch.org/whl/cu128 \
+    "torch==2.10.0+cu128" \
+    "unsloth==2026.8.2" \
+    "transformers==5.5.0" \
+    "trl==0.24.0" \
+    "peft==0.20.0" \
+    "bitsandbytes==0.50.0" \
+    "accelerate==1.10.1" \
+    "datasets==4.3.0" \
+    "xformers==0.0.35" \
+    scikit-learn
 !pip install -q --no-warn-script-location llama-cpp-python
 ```
 
+> The `--extra-index-url` is required: the `torch==2.10.0+cu128` wheel only exists on
+> the PyTorch cu128 index, not PyPI. (This matches the Kaggle base image — no torch upgrade needed.)
 > If the install fails on `unsloth`, just re-run this cell once — Kaggle mirrors are flaky.
 
 ### Cell 3 — Sanity-check the data
@@ -90,8 +102,7 @@ Expected output:
     --model Qwen/Qwen3-4B-Instruct-2507 \
     --out /kaggle/working/sft_qwen3_4b \
     --epochs 3 --lr 2e-4 \
-    --batch-size 4 --grad-accum 2 --max-seq-len 2048 \
-    --wandb
+    --batch-size 4 --grad-accum 2 --max-seq-len 2048
 ```
 
 What you should see: `dtype: fp16` (T4/P100) or `bf16` (L4/A100+), `loaded 41845 rows`, per-epoch loss decreasing (~2.0 → ~1.3).
@@ -341,14 +352,15 @@ FileLink("/kaggle/working/medchat-q4.gguf")   # ~2.6 GB, the deployable artifact
 | `cannot pickle 'ConfigModuleInstance'` | Fixed in current code — SFT now uses `transformers.Trainer` with pre-tokenized data (no trl multiprocess re-tokenization). If you see it, you're running the old `train_sft.py`: `!git pull` and re-run |
 | `WARNING: Unsloth should be imported before [trl, transformers, peft]` | Fixed in current code (unsloth imported first). `git pull` to update |
 | `warmup_ratio is deprecated` | Fixed — code now computes `warmup_steps` explicitly |
-| `Skipping import of cpp extensions ... upgrade to torch >= 2.11` | Harmless but slower. Run the optional torch-upgrade line in Cell 2 |
+| `Skipping import of cpp extensions ...` | Expected with torch 2.10.0+cu128 (this runbook pins it) and harmless — unsloth's fast kernels need torch >= 2.11; not required here |
+| `AttributeError: 'int' object has no attribute 'mean'` (Cell 4, step 0) | unsloth 2026.8.2 + transformers >= 4.54 default `average_tokens_across_devices=True`; on 2 visible GPUs (T4 x2) the loss becomes an int and crashes. Fixed in current code (`average_tokens_across_devices=False`); `git pull` |
 | `datasets.CastError ... 1 new columns ({'corruption'})` | Fixed — `category`/`corruption` now exist on every row |
 | `TypeError: Couldn't cast array of type string to null` (train.jsonl) | Fixed — metadata is now sentinel strings (`"none"`), never null, and the loader declares explicit `Features`; `git pull` and re-run Cell 4 |
 | Loss jumps / model learns the prompt | Fixed — data collator now preserves the `-100` prompt mask (`DataCollatorForLanguageModeling` was overwriting labels with input_ids); `git pull` |
 | `Trainer.__init__() got an unexpected keyword argument 'tokenizer'` | Fixed — code uses `processing_class` (transformers 5.x) with a `tokenizer=` fallback |
-| `HFValidationError: Repo id must be in the form ... /kaggle/working/sft_qwen3_4b` | The eval cell ran before SFT finished (checkpoint dir doesn't exist). Run Cell 4 fully, then Cell 5 |
+| `HFValidationError: Repo id must be in the form ... /kaggle/working/sft_qwen3_4b` | The checkpoint dir doesn't exist — SFT didn't finish, or a new session wiped `/kaggle/working`. Run Cell 4 fully, then Cell 5. `dpo_stage2.py` now fails fast with a "Model directory not found — re-run the SFT stage" message instead |
 | `CUDA out of memory` (Cell 4) | `--batch-size 2 --grad-accum 4`; keep `--flash` OFF on T4/P100 |
-| `model load failed` | Internet dropped mid-download → re-run Cell 4; or swap `--model Qwen/Qwen3-4B-Instruct` |
+| `model load failed` | Internet dropped mid-download → re-run Cell 4; or swap `--model Qwen/Qwen3-4B-Instruct-2507` |
 | `valid_json 0/8` (Cell 5) | Format bug → look at raw generation, re-run Cell 4 |
 | DPO `KeyError` | trl too old → re-run Cell 2, restart kernel |
 | GGUF smoke test prints JSON + noise | llama.cpp too old → `!pip install -U llama-cpp-python`; ensure `enable_thinking=False` |
@@ -359,7 +371,7 @@ FileLink("/kaggle/working/medchat-q4.gguf")   # ~2.6 GB, the deployable artifact
 
 | Setting | Value | Reason |
 |---|---|---|
-| base model | Qwen3-4B-Instruct | 4B-class SOTA, MIT license, strong instruction follow |
+| base model | Qwen3-4B-Instruct-2507 | 4B-class SOTA, MIT license, strong instruction follow |
 | QLoRA r / α | 32 / 64 | good capacity for format tasks; α=2r standard |
 | lr / schedule | 2e-4 / cosine | QLoRA default; warmup 5% |
 | epochs | 3 | 42k rows ≈ 19.5M tokens × 3 ≈ 58M ≈ 14x model size (rule of thumb) |

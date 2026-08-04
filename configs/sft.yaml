@@ -1,5 +1,5 @@
 # Reference hyperparameters for SFT (QLoRA, Qwen3-4B on Kaggle T4/P100)
-model: unsloth/Qwen3-4B-Instruct
+model: Qwen/Qwen3-4B-Instruct-2507
 max_seq_length: 2048
 load_in_4bit: true
 lora_r: 32

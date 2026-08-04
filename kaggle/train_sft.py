@@ -3,12 +3,16 @@
 Kaggle setup:
     1. Notebook settings: Accelerator = GPU (P100 or T4 is fine), Internet ON
     2. Clone the repo (code + dataset) into /kaggle/working/medchat
-    3. Cell:  !pip install -q -U unsloth trl datasets accelerate peft bitsandbytes
+    3. Cell:  !pip install -q --no-warn-script-location --extra-index-url \
+                 https://download.pytorch.org/whl/cu128 \
+                 "torch==2.10.0+cu128" "unsloth==2026.8.2" "transformers==5.5.0" \
+                 "trl==0.24.0" "peft==0.20.0" "bitsandbytes==0.50.0" \
+                 "accelerate==1.10.1" "datasets==4.3.0" "xformers==0.0.35"
     4. Run this script with the right --data path
 
 Usage:
     python train_sft.py --data /kaggle/working/medchat/dataset/final/train.jsonl \
-        --model unsloth/Qwen3-4B-Instruct --out /kaggle/working/sft_qwen3_4b
+        --model Qwen/Qwen3-4B-Instruct-2507 --out /kaggle/working/sft_qwen3_4b
 
 Why plain transformers.Trainer instead of trl.SFTTrainer:
   - trl's SFTTrainer re-tokenizes the dataset internally with num_proc>=2 and
@@ -34,7 +38,9 @@ try:
 except ImportError:
     print("Missing deps, installing unsloth + friends...")
     subprocess.run([sys.executable, "-m", "pip", "install", "-q",
-                    "unsloth", "trl", "datasets", "accelerate", "peft"], check=True)
+                    "unsloth==2026.8.2", "transformers==5.5.0", "trl==0.24.0",
+                    "peft==0.20.0", "bitsandbytes==0.50.0", "accelerate==1.10.1",
+                    "datasets==4.3.0", "xformers==0.0.35"], check=True)
     import torch
     from unsloth import FastLanguageModel, is_bfloat16_supported
     from datasets import Features, Value, load_dataset
@@ -121,7 +127,7 @@ def validate_rows(path, n=500):
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--data", default="/kaggle/working/medchat/dataset/final/train.jsonl")
-    ap.add_argument("--model", default="unsloth/Qwen3-4B-Instruct")
+    ap.add_argument("--model", default="Qwen/Qwen3-4B-Instruct-2507")
     ap.add_argument("--out", default="/kaggle/working/sft_qwen3_4b")
     ap.add_argument("--max-seq-len", type=int, default=2048)
     ap.add_argument("--lora-r", type=int, default=32)
@@ -213,6 +219,7 @@ def main():
         lr_scheduler_type="cosine",
         warmup_steps=warmup_steps,
         max_grad_norm=1.0,
+        average_tokens_across_devices=False,  # unsloth bug workaround: avoids 'int' loss on multi-GPU (issue #3769)
         fp16=fp16,
         bf16=not fp16,
         logging_steps=20,
