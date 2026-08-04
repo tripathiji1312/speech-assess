@@ -47,16 +47,10 @@ def to_messages(conversations):
             for m in conversations]
 
 
-def format_row(tokenizer):
-    def fmt(row):
-        return {"text": tokenizer.apply_chat_template(
-            to_messages(row["conversations"]), tokenize=False, add_generation_prompt=False)}
-    return fmt
-
-
 def make_tokens(tokenizer):
-    """Tokenize the full example; mask everything before the assistant turn
-    (labels=-100) so loss is only on the model's own output."""
+    """One-pass map: tokenize the full example and mask everything before the
+    assistant turn (labels=-100) so loss is only on the model's own output.
+    MUST be applied before any remove_columns (it reads "conversations")."""
     def fn(row):
         msgs = to_messages(row["conversations"])
         full = tokenizer.apply_chat_template(
@@ -192,8 +186,10 @@ def main():
         "corruption": Value("string"),
     })
     ds = load_dataset("json", data_files=str(data_path), features=features)["train"]
-    ds = ds.map(format_row(tokenizer), remove_columns=ds.column_names)
+    # single map + one remove_columns: chaining a second map that reads
+    # "conversations" would KeyError (column already removed by the first map)
     ds = ds.map(make_tokens(tokenizer), remove_columns=ds.column_names)
+    assert ds.column_names == ["input_ids", "attention_mask", "labels"], ds.column_names
 
     max_tok = args.max_seq_len - 2
     dropped = sum(1 for r in ds if len(r["input_ids"]) > max_tok)
