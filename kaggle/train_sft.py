@@ -26,12 +26,14 @@ Expected: ~42k rows, 1 epoch, lr 2e-4 -> measured ~12h/epoch on 1 T4, ~6h on T4 
 session cap, so the default is 1 epoch; training has no resume support.
 
 Multi-GPU (torchrun) REQUIRES non-reentrant gradient checkpointing: unsloth's
-patched model forward hardcodes use_reentrant=True in its checkpoint call
-(unsloth/models/llama.py), which crashes DDP on the first backward with
-"marked as ready twice" (unsloth issue #3713; the merged fix PR #3751 only
-covers the VLM path). We unpatch unsloth's smart GC (use_gradient_checkpointing
-=True) AND force use_reentrant=False under torchrun (see
-_force_nonreentrant_checkpointing).
+patch_peft_model calls prepare_model_for_kbit_training(..., use_reentrant=True)
+(unsloth/models/llama.py), which binds every Qwen3DecoderLayer's
+_gradient_checkpointing_func (transformers 5.5.0 GradientCheckpointingLayer) to
+the reentrant checkpoint; reentrant checkpointing crashes DDP on the first
+backward with "marked as ready twice" (unsloth issue #3713; the merged fix PR
+#3751 only covers the VLM path). We unpatch unsloth's smart GC
+(use_gradient_checkpointing=True) AND force use_reentrant=False under torchrun
+(see _force_nonreentrant_checkpointing).
 """
 
 import argparse
@@ -135,21 +137,37 @@ def validate_rows(path, n=500):
     return rows[0]
 
 
-def _force_nonreentrant_checkpointing():
-    """Multi-GPU DDP fix for unsloth's hardcoded reentrant checkpointing.
+def _force_nonreentrant_checkpointing(model):
+    """Multi-GPU DDP fix for reentrant gradient checkpointing (two mechanisms).
 
-    Unsloth's patched model forward calls torch.utils.checkpoint.checkpoint
-    with use_reentrant=True hardcoded (unsloth/models/llama.py). Reentrant
-    checkpointing is incompatible with DDP: the same LoRA parameter gets
-    gradients from multiple reentrant backward passes and DDP raises
+    Reentrant checkpointing is incompatible with DDP: the same LoRA parameter
+    gets gradients from multiple reentrant backward passes and DDP raises
     "Expected to mark a variable ready only once ... marked as ready twice"
-    (unsloth issue #3713). The use_gradient_checkpointing flag only controls
-    whether unsloth's smart patch is applied globally - it cannot change the
-    hardcoded call. So we wrap torch.utils.checkpoint.checkpoint (and the
-    transformers alias) to force use_reentrant=False, the PyTorch-recommended
-    mode that "will work as expected without any limitations" under DDP. This
-    mirrors unsloth's own VLM fix (unsloth/models/vision.py, PR #3751).
+    (unsloth issue #3713). Non-reentrant is the PyTorch-documented DDP-safe
+    mode ("will work as expected without any limitations"). Two independent
+    mechanisms force use_reentrant=True in this stack, and both are neutralized
+    here (mirrors unsloth's own VLM fix, unsloth/models/vision.py PR #3751):
+
+    1. Unsloth's patched model forward calls torch.utils.checkpoint.checkpoint
+       with use_reentrant=True hardcoded (unsloth/models/llama.py). We wrap the
+       torch.utils.checkpoint.checkpoint module attribute (and the
+       transformers.modeling_utils.checkpoint alias) to force
+       use_reentrant=False at call time.
+
+    2. transformers 5.5.0 Qwen3DecoderLayer inherits GradientCheckpointingLayer
+       (transformers/modeling_layers.py), whose __call__ invokes
+       self._gradient_checkpointing_func - a functools.partial captured when
+       gradient_checkpointing_enable() ran (modeling_utils.py:3096), NOT a
+       runtime module-attribute lookup. unsloth's patch_peft_model calls
+       prepare_model_for_kbit_training(..., use_reentrant=True)
+       (unsloth/models/llama.py), so every layer's _gradient_checkpointing_func
+       is bound to the REENTRANT checkpoint. Wrapping the module attribute
+       cannot change an already-captured partial - that is why the previous
+       wrapper-only fix still crashed at torch/utils/checkpoint.py:325. We
+       therefore also overwrite _gradient_checkpointing_func on every module
+       with a non-reentrant partial.
     """
+    import functools
     import torch.utils.checkpoint as _ckpt
     try:
         import transformers.modeling_utils as _tm
@@ -164,6 +182,18 @@ def _force_nonreentrant_checkpointing():
     _ckpt.checkpoint = _nonre
     if _tm is not None and hasattr(_tm, "checkpoint"):
         _tm.checkpoint = _nonre
+
+    # Mechanism 2: overwrite the captured per-layer checkpoint function.
+    # determinism_check="none" is only valid for use_reentrant=False (torch
+    # ignores it for reentrant) and silences non-reentrant determinism warnings
+    # with unsloth's fast kernels.
+    _nonre_partial = functools.partial(_orig, use_reentrant=False, determinism_check="none")
+    patched = 0
+    for module in model.modules():
+        if hasattr(module, "_gradient_checkpointing_func"):
+            module._gradient_checkpointing_func = _nonre_partial
+            patched += 1
+    print(f"[DDP fix] forced non-reentrant checkpointing on {patched} module(s)")
 
 
 def main():
@@ -241,10 +271,13 @@ def main():
     )
 
     if int(os.environ.get("WORLD_SIZE", "1")) > 1:
-        # torchrun/accelerate multi-GPU: DDP is incompatible with the reentrant
-        # checkpointing unsloth's patched layers hardcode. MUST run after
-        # get_peft_model (which restores the original checkpoint functions).
-        _force_nonreentrant_checkpointing()
+        # torchrun/accelerate multi-GPU: DDP is incompatible with reentrant
+        # checkpointing. MUST run after get_peft_model: peft's
+        # prepare_model_for_kbit_training (called inside unsloth's
+        # patch_peft_model with use_reentrant=True) is what binds every
+        # Qwen3DecoderLayer._gradient_checkpointing_func to the reentrant
+        # checkpoint, so the override must come after it.
+        _force_nonreentrant_checkpointing(model)
 
     features = Features({
         "_id": Value("string"),
@@ -302,6 +335,11 @@ def main():
         trainer = Trainer(model=model, tokenizer=tokenizer,
                           train_dataset=ds, data_collator=make_collator(tokenizer),
                           args=train_args)
+
+    if int(os.environ.get("WORLD_SIZE", "1")) > 1:
+        # Insurance: re-apply in case anything between get_peft_model and here
+        # re-enabled gradient checkpointing (idempotent, cheap).
+        _force_nonreentrant_checkpointing(model)
 
     trainer.train()
     Path(args.out).mkdir(parents=True, exist_ok=True)
