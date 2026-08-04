@@ -25,14 +25,18 @@ Expected: ~42k rows, 1 epoch, lr 2e-4 -> measured ~12h/epoch on 1 T4, ~6h on T4 
 (torchrun --standalone --nproc_per_node=2). 3 epochs (~36h) exceed Kaggle's ~9h
 session cap, so the default is 1 epoch; training has no resume support.
 
-Multi-GPU (torchrun) REQUIRES native non-reentrant gradient checkpointing
-(use_gradient_checkpointing=True): unsloth's reentrant smart GC ("unsloth")
-crashes DDP on the first backward with "marked as ready twice"
-(unsloth issue #3713; the merged fix PR #3751 only covers the VLM path).
+Multi-GPU (torchrun) REQUIRES non-reentrant gradient checkpointing: unsloth's
+patched model forward hardcodes use_reentrant=True in its checkpoint call
+(unsloth/models/llama.py), which crashes DDP on the first backward with
+"marked as ready twice" (unsloth issue #3713; the merged fix PR #3751 only
+covers the VLM path). We unpatch unsloth's smart GC (use_gradient_checkpointing
+=True) AND force use_reentrant=False under torchrun (see
+_force_nonreentrant_checkpointing).
 """
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -131,6 +135,37 @@ def validate_rows(path, n=500):
     return rows[0]
 
 
+def _force_nonreentrant_checkpointing():
+    """Multi-GPU DDP fix for unsloth's hardcoded reentrant checkpointing.
+
+    Unsloth's patched model forward calls torch.utils.checkpoint.checkpoint
+    with use_reentrant=True hardcoded (unsloth/models/llama.py). Reentrant
+    checkpointing is incompatible with DDP: the same LoRA parameter gets
+    gradients from multiple reentrant backward passes and DDP raises
+    "Expected to mark a variable ready only once ... marked as ready twice"
+    (unsloth issue #3713). The use_gradient_checkpointing flag only controls
+    whether unsloth's smart patch is applied globally - it cannot change the
+    hardcoded call. So we wrap torch.utils.checkpoint.checkpoint (and the
+    transformers alias) to force use_reentrant=False, the PyTorch-recommended
+    mode that "will work as expected without any limitations" under DDP. This
+    mirrors unsloth's own VLM fix (unsloth/models/vision.py, PR #3751).
+    """
+    import torch.utils.checkpoint as _ckpt
+    try:
+        import transformers.modeling_utils as _tm
+    except Exception:
+        _tm = None
+
+    _orig = _ckpt.checkpoint
+
+    def _nonre(function, *args, use_reentrant=None, **kwargs):
+        return _orig(function, *args, use_reentrant=False, **kwargs)
+
+    _ckpt.checkpoint = _nonre
+    if _tm is not None and hasattr(_tm, "checkpoint"):
+        _tm.checkpoint = _nonre
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--data", default="/kaggle/working/medchat/dataset/final/train.jsonl")
@@ -195,13 +230,21 @@ def main():
         lora_alpha=args.lora_alpha,
         lora_dropout=0,
         bias="none",
-        # Native non-reentrant GC is REQUIRED for multi-GPU: unsloth's reentrant
-        # smart GC ("unsloth") crashes DDP on the first backward with
-        # "marked as ready twice" (unsloth issue #3713; PR #3751 fixes only VLM).
-        # True = unpatch smart GC -> transformers 5.5.0 native GC (use_reentrant=False).
+        # Unpatch unsloth's reentrant smart GC: its "unsloth" mode forces
+        # use_reentrant=True and crashes DDP ("marked as ready twice",
+        # unsloth issue #3713; PR #3751 fixes only the VLM path). True keeps
+        # gradient checkpointing but restores torch's native checkpoint; the
+        # model forward still hardcodes use_reentrant=True, so we additionally
+        # force non-reentrant mode below when running multi-GPU.
         use_gradient_checkpointing=True,
         random_state=42,
     )
+
+    if int(os.environ.get("WORLD_SIZE", "1")) > 1:
+        # torchrun/accelerate multi-GPU: DDP is incompatible with the reentrant
+        # checkpointing unsloth's patched layers hardcode. MUST run after
+        # get_peft_model (which restores the original checkpoint functions).
+        _force_nonreentrant_checkpointing()
 
     features = Features({
         "_id": Value("string"),
