@@ -182,13 +182,21 @@ def main():
         load_and_merge(sft_adapter, args.sft_out, args.max_seq_len)
 
     print(f"[recover] stage 2: SFT model + DPO adapter -> {args.final_out}")
-    load_and_merge(staging, args.final_out, args.max_seq_len)
-
-    # sft_qwen3_4b was only the intermediate base for stage 2 - Cells 5/7/9 use
-    # sft_dpo. Free its 8.1GB so the GGUF export has room.
+    # Stage 2's save reads the base shards from the SFT dir, so keep that base
+    # on /tmp (~80GB): /kaggle/working then only ever holds the 8.1GB output
+    # while it is being written, keeping the unsloth disk check (~8.1GB free)
+    # happy even if unknown junk is eating the quota.
+    tmp_sft = Path("/tmp/sft_qwen3_4b")
     if Path(args.sft_out).is_dir():
-        shutil.rmtree(args.sft_out, ignore_errors=True)
-        print(f"[recover] removed intermediate {args.sft_out} (+8.1G freed)")
+        shutil.rmtree(tmp_sft, ignore_errors=True)
+        shutil.move(args.sft_out, tmp_sft)
+        pin_base_model(staging, str(tmp_sft))
+        print(f"[recover] base moved to {tmp_sft} - freeing its 8.1G from the quota")
+        disk_report()
+    load_and_merge(staging, args.final_out, args.max_seq_len)
+    shutil.rmtree(tmp_sft, ignore_errors=True)
+    print(f"[recover] removed {tmp_sft} from /tmp")
+
     shutil.rmtree(staging, ignore_errors=True)
     disk_report()
     print("[recover] done. Status:\n"
