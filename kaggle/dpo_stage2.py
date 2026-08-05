@@ -172,8 +172,29 @@ def main():
     trainer = DPOTrainer(**dpo_kwargs)
 
     trainer.train()
+
+    # /kaggle/working is ~19.5GB: the SFT model (~8GB) + this run's checkpoint
+    # dir (~8GB weights + optimizer state) + the merged output (~8GB) do not
+    # fit together (RuntimeError: no disk space left, seen in practice). The
+    # intermediate checkpoints are superseded by the merged model - delete them
+    # before save_pretrained_merged, which downloads the original shards into
+    # args.out and overwrites them in place.
+    import shutil
+    for stale in ("/kaggle/working/dpo_ckpt", "/kaggle/working/ckpt"):
+        if Path(stale).is_dir():
+            shutil.rmtree(stale)
+            print(f"[DPO] freed disk: removed {stale}")
+
     Path(args.out).mkdir(parents=True, exist_ok=True)
-    model.save_pretrained_merged(args.out, tokenizer, save_method="merged_16bit")
+    try:
+        model.save_pretrained_merged(args.out, tokenizer, save_method="merged_16bit")
+    except RuntimeError as e:
+        if "disk" in str(e).lower() or "space" in str(e).lower():
+            raise SystemExit(
+                "No disk space for the merged 16-bit save. Free space first, e.g.\n"
+                "    !rm -rf /kaggle/working/dpo_ckpt /kaggle/working/ckpt /kaggle/working/sft_qwen3_4b\n"
+                "or upload to the hub instead with model.push_to_hub_merged(...).") from e
+        raise
     tokenizer.save_pretrained(args.out)
     print(f"saved DPO model -> {args.out}")
 

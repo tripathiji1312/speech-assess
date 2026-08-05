@@ -105,8 +105,11 @@ def batch_generate(model, tokenizer, rows, max_new=512):
     with torch.no_grad():
         for i in range(0, len(prompts), 8):
             batch = prompts[i:i + 8]
+            # apply_chat_template(tokenize=True) already returned id lists;
+            # pad() expects a list of per-row dicts (a bare {"input_ids": ...}
+            # mapping trips the BatchEncoding type check in transformers 5.x).
             enc = tokenizer.pad(
-                {"input_ids": batch},
+                [{"input_ids": ids} for ids in batch],
                 return_tensors="pt", padding=True)
             enc = {k: v.to(model.device) for k, v in enc.items()}
             gen = model.generate(

@@ -158,6 +158,7 @@ If `valid_json: 0/8`, stop — do not continue; check raw output / re-run Cell 4
 
 Expected: `loaded 1047 preference pairs`, loss trending down.
 Output: merged model in `/kaggle/working/sft_dpo/`.
+The script auto-deletes `/kaggle/working/dpo_ckpt` after training so the ~8GB merged save fits next to the SFT model in `/kaggle/working` (~19.5GB quota).
 
 ### Cell 7 — Export GGUF Q4_K_M (~2.6 GB)
 
