@@ -15,6 +15,7 @@ Usage (Kaggle or local GPU):
 import argparse
 import json
 import re
+from collections.abc import Mapping
 from pathlib import Path
 
 
@@ -105,12 +106,19 @@ def batch_generate(model, tokenizer, rows, max_new=512):
     with torch.no_grad():
         for i in range(0, len(prompts), 8):
             batch = prompts[i:i + 8]
-            # apply_chat_template(tokenize=True) already returned id lists;
-            # pad() expects a list of per-row dicts (a bare {"input_ids": ...}
-            # mapping trips the BatchEncoding type check in transformers 5.x).
-            enc = tokenizer.pad(
-                [{"input_ids": ids} for ids in batch],
-                return_tensors="pt", padding=True)
+            # transformers 5.x apply_chat_template(tokenize=True) returns
+            # BatchEncoding dicts (with attention_mask) rather than plain id
+            # lists, so normalize to flat id lists before padding.
+            ids = [p["input_ids"] if isinstance(p, Mapping) else p for p in batch]
+            max_len = max(len(x) for x in ids)
+            pad_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None \
+                else tokenizer.eos_token_id
+            padded = [x + [pad_id] * (max_len - len(x)) for x in ids]
+            masks = [[1] * len(x) + [0] * (max_len - len(x)) for x in ids]
+            enc = {
+                "input_ids": torch.tensor(padded, dtype=torch.long),
+                "attention_mask": torch.tensor(masks, dtype=torch.long),
+            }
             enc = {k: v.to(model.device) for k, v in enc.items()}
             gen = model.generate(
                 **enc, max_new_tokens=max_new, do_sample=False,
