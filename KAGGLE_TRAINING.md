@@ -387,6 +387,7 @@ FileLink("/kaggle/working/medchat-q4.gguf")   # ~2.6 GB, the deployable artifact
 | `valid_json 0/8` (Cell 5) | Format bug → look at raw generation, re-run Cell 4 |
 | DPO `KeyError` | trl too old → re-run Cell 2, restart kernel |
 | GGUF smoke test prints JSON + noise | llama.cpp too old → `!pip install -U llama-cpp-python`; ensure `enable_thinking=False` |
+| `RuntimeError: Unsloth: Failed saving locally - no disk space left` (Cell 6, after training) | Training finished; only the merged save failed (sft ~8GB + dpo_ckpt ~8GB + output ~8GB > 19.5GB quota). Do NOT re-run Cell 6 blind. If a checkpoint survives at `/kaggle/working/dpo_ckpt/checkpoint-*/` (adapter + trainer files), run `kaggle/recover_dpo.py` to rebuild both merged models from the adapters without retraining; it fails fast if the SFT adapter is gone (then re-run Cell 4 + Cell 6). Current `dpo_stage2.py` also auto-deletes `dpo_ckpt` before the merged save so fresh runs fit |
 | Session quota ended mid-run | No resume support — a killed run restarts from scratch. Re-create notebook → Cell 1 + Cell 2 → re-run Cell 4 (use the 2-GPU `--epochs 1` command so it fits in one ~9 h session) |
 | Slow training on P100 | Expected (~40% slower than T4); same commands work |
 
