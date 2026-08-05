@@ -10,8 +10,10 @@ Usage:
 """
 
 import argparse
+import shutil
 import subprocess
 import sys
+from pathlib import Path
 
 try:
     from unsloth import FastLanguageModel
@@ -45,7 +47,20 @@ def main():
         gc.chat_template_kwargs = {"enable_thinking": False}
         print("disabled Qwen3 thinking mode (deterministic JSON output)")
     model.save_pretrained_gguf(args.out, tokenizer, quantization_method=args.quant)
-    print(f"exported -> {args.out}")
+    out = Path(args.out)
+    # unsloth may write into a "<model>_gguf/" subdir instead of args.out
+    # (e.g. sft_dpo_gguf/sft_dpo.Q4_K_M.gguf), so locate the produced file.
+    produced = sorted(Path(out.parent).glob("*_gguf/*.gguf")) if out.is_absolute() else []
+    produced = [p for p in produced if p.is_file()]
+    if produced:
+        src = produced[-1]
+        if src != out:
+            shutil.copy(src, out)
+            shutil.rmtree(src.parent, ignore_errors=True)
+            print(f"moved {src} -> {out}")
+    if not out.is_file():
+        raise SystemExit(f"ERROR: no GGUF produced under {out} or {out.parent}/*_gguf/")
+    print(f"exported -> {out}")
     print("deploy with llama.cpp / llama_cpp_python, use configs/extraction.gbnf for JSON decoding")
 
 
