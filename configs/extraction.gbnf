@@ -3,16 +3,18 @@
 #   Llama(model_path=..., grammar=LlamaGrammar.from_file("configs/extraction.gbnf"))
 # This makes invalid JSON physically impossible.
 # NOTE: llama.cpp parses grammars line-by-line - one rule per line.
+# NOTE: underscores are NOT allowed in rule names (llama.cpp is_word_char);
+#       use camelCase or hyphens instead.
 
 root ::= "{" ws "chief_complaint" ws ":" ws string ws "," ws "hpi" ws ":" ws string ws "," ws "vitals" ws ":" ws vitals ws "," ws "medications" ws ":" ws array1 ws "," ws "allergies" ws ":" ws array2 ws "," ws "red_flags" ws ":" ws array3 ws "," ws "missing_info" ws ":" ws array4 ws "," ws "urgency" ws ":" ws urgency ws "," ws "escalate" ws ":" ws bool ws "}"
-vitals ::= "{" ws "temp" ws ":" ws nullable_string ws "," ws "bp" ws ":" ws nullable_string ws "," ws "hr" ws ":" ws nullable_int ws "," ws "spo2" ws ":" ws nullable_int ws "}"
+vitals ::= "{" ws "temp" ws ":" ws nullableString ws "," ws "bp" ws ":" ws nullableString ws "," ws "hr" ws ":" ws nullableInt ws "," ws "spo2" ws ":" ws nullableInt ws "}"
 array1 ::= "[" ws "]" | "[" ws med ws ("," ws med ws)* "]"
 med ::= "{" ws "name" ws ":" ws string ws "," ws "dose" ws ":" ws string ws "," ws "frequency" ws ":" ws string ws "}"
 array2 ::= "[" ws "]" | "[" ws string ws ("," ws string ws)* "]"
 array3 ::= array2
 array4 ::= array2
-nullable_string ::= "null" | string
-nullable_int ::= "null" | int
+nullableString ::= "null" | string
+nullableInt ::= "null" | int
 string ::= "\"" ([^"\\] | "\\" .)* "\""
 int ::= [0-9]+
 bool ::= "true" | "false"
