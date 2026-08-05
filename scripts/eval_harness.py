@@ -113,8 +113,10 @@ def batch_generate(model, tokenizer, rows, max_new=512):
             max_len = max(len(x) for x in ids)
             pad_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None \
                 else tokenizer.eos_token_id
-            padded = [x + [pad_id] * (max_len - len(x)) for x in ids]
-            masks = [[1] * len(x) + [0] * (max_len - len(x)) for x in ids]
+            # Decoder-only models need LEFT padding: with right padding the
+            # model generates from a pad position and can stop immediately.
+            padded = [[pad_id] * (max_len - len(x)) + x for x in ids]
+            masks = [[0] * (max_len - len(x)) + [1] * len(x) for x in ids]
             enc = {
                 "input_ids": torch.tensor(padded, dtype=torch.long),
                 "attention_mask": torch.tensor(masks, dtype=torch.long),
