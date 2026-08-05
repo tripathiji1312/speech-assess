@@ -273,6 +273,8 @@ def main():
     ap.add_argument("--max-new-tokens", type=int, default=512)
     ap.add_argument("--dtype", default="auto")
     ap.add_argument("--device", default="cuda")
+    ap.add_argument("--dump", type=int, default=0,
+                    help="print raw model outputs for the first N rows per task")
     args = ap.parse_args()
 
     if not Path(args.checkpoint).is_dir():
@@ -297,6 +299,13 @@ def main():
             continue
         print(f"\n=== {task} ({len(trows)} rows) ===")
         outputs = batch_generate(model, tokenizer, trows, args.max_new_tokens)
+        if args.dump:
+            for r, out in zip(trows[:args.dump], outputs[:args.dump]):
+                try:
+                    gold = r["conversations"][2]["value"]
+                except Exception:
+                    gold = r["conversations"][-1]["value"]
+                print(f"--- row {trows.index(r)} ---\nGOLD: {gold[:300]}\nPRED: {out[:500]}")
         if task == "extraction":
             res = eval_extraction(trows, outputs)
         elif task == "guardrail":
