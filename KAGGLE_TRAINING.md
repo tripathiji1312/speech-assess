@@ -195,14 +195,12 @@ sys = ("You are a medical intake assistant. Extract the structured summary "
 out = llm.create_chat_completion(
     messages=[{"role": "system", "content": sys},
               {"role": "user", "content": f"Transcript:\n{transcript}"}],
-    # built-in JSON grammar - avoids GBNF parser quirks entirely
-    response_format={"type": "json_object"},
     temperature=0.0, max_tokens=512,
 )
 print(out["choices"][0]["message"]["content"])
 ```
 
-Expected: one valid JSON object with `urgency`, `medications`, `missing_info`, etc.
+Expected: a JSON-ish object with `urgency`, `medications` (Metformin), `escalate`. Note: the model may emit unquoted keys (e.g. `chief_complaint: "..."`) — for the smoke test, judge on content (chest pain / severe / Metformin present). For deployment, enforce strict JSON via `--grammar configs/extraction.gbnf` in llama-cli (the gbnf is llama.cpp-compatible) or post-process with `strip_outside_braces` + key quoting.
 If garbage → do **not** download; re-run Cell 4/6.
 
 ### Cell 9 — Full eval on val split (final numbers)
