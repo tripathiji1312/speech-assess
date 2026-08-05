@@ -173,7 +173,7 @@ The script auto-deletes `/kaggle/working/dpo_ckpt` after training so the ~8GB me
 ### Cell 8 — On-device smoke test (llama.cpp + grammar-constrained JSON)
 
 ```python
-from llama_cpp import Llama
+from llama_cpp import Llama, LlamaGrammar
 
 llm = Llama(
     model_path="/kaggle/working/medchat-q4.gguf",
@@ -181,7 +181,8 @@ llm = Llama(
     chat_template_kwargs={"enable_thinking": False},
 )
 
-grammar = open("/kaggle/working/medchat/configs/extraction.gbnf").read()
+grammar = LlamaGrammar.from_string(
+    open("/kaggle/working/medchat/configs/extraction.gbnf").read())
 transcript = (
     "Doctor: What's going on today?\n"
     "Patient: chest pain for about 2 hours. It's severe.\n"
