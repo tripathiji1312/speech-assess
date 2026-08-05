@@ -197,7 +197,6 @@ out = llm.create_chat_completion(
     messages=[{"role": "system", "content": sys},
               {"role": "user", "content": f"Transcript:\n{transcript}"}],
     grammar=grammar, temperature=0.0, max_tokens=512,
-    chat_template_kwargs={"enable_thinking": False},
 )
 print(out["choices"][0]["message"]["content"])
 ```
