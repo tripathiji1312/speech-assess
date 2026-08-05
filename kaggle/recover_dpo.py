@@ -50,6 +50,38 @@ except ImportError:
     from unsloth import FastLanguageModel
 
 
+def disk_report():
+    """Print /kaggle/working usage so a failing save is diagnosable."""
+    total, used, free = shutil.disk_usage("/kaggle/working")
+    gb = 2**30
+    print(f"[recover] disk: {used/gb:.1f}G used / "
+          f"{int(free*0.95/gb):.1f}G usable (of {total/gb:.0f}G) in /kaggle/working")
+    if free * 0.95 < 8.1e9:
+        print("[recover] WARNING: below the ~8.1GB unsloth saves need - purge or "
+              "rerun stage 2 after freeing space!")
+
+
+def purge_stale_cache():
+    """Remove the 4-bit base + other HF downloads the ORIGINAL cells cached
+    under /kaggle/working (default HF_HOME). This script redirects to /tmp, so
+    any old cache in the quota is pure junk - it is what tipped the last save
+    under the 8.1GB threshold. Also drop stray GGUF files from failed exports."""
+    import glob
+    for p in glob.glob("/kaggle/working/*.gguf*"):
+        print(f"[recover] removing stray gguf {p}")
+        try:
+            os.remove(p)
+        except OSError:
+            pass
+    for p in (Path("/kaggle/working/hf_home"),
+              Path("/kaggle/working/.cache"),
+              Path.home() / ".cache" / "huggingface"):
+        if p.exists():
+            size = sum(f.stat().st_size for f in p.rglob("*") if f.is_file())
+            print(f"[recover] purging stale HF cache {p} ({size/2**30:.1f}G)")
+            shutil.rmtree(p, ignore_errors=True)
+
+
 def find_adapter_dir(*candidates):
     """Locate a dir containing adapter_config.json + adapter weights, either at
     the candidate root or in a nested checkpoint-NNN subdir. Trainer checkpoints
@@ -87,9 +119,11 @@ def load_and_merge(adapter_dir, out_dir, max_seq_len):
         attn_implementation="sdpa",
     )
     Path(out_dir).mkdir(parents=True, exist_ok=True)
+    disk_report()
     model.save_pretrained_merged(out_dir, tokenizer, save_method="merged_16bit")
     tokenizer.save_pretrained(out_dir)
     print(f"[recover] merged -> {out_dir}")
+    disk_report()
     del model
     gc.collect()
     torch.cuda.empty_cache()
@@ -118,10 +152,12 @@ def main():
             "/kaggle/working/dpo_ckpt - the DPO weights are lost; re-run Cell 6.")
     print(f"[recover] SFT adapter: {sft_adapter}")
     print(f"[recover] DPO adapter: {dpo_adapter}")
+    purge_stale_cache()
+    disk_report()
 
     # The final output dir may currently BE the (misplaced) adapter dir, so
     # stage it elsewhere before we wipe it to write the merged model.
-    staging = Path("/kaggle/working/dpo_adapter_staging")
+    staging = Path("/tmp/dpo_adapter_staging")
     shutil.rmtree(staging, ignore_errors=True)
     shutil.copytree(dpo_adapter, staging)
     pin_base_model(staging, args.sft_out)
@@ -136,12 +172,17 @@ def main():
     print(f"[recover] stage 2: SFT model + DPO adapter -> {args.final_out}")
     load_and_merge(staging, args.final_out, args.max_seq_len)
 
+    # sft_qwen3_4b was only the intermediate base for stage 2 - Cells 5/7/9 use
+    # sft_dpo. Free its 8.1GB so the GGUF export has room.
+    if Path(args.sft_out).is_dir():
+        shutil.rmtree(args.sft_out, ignore_errors=True)
+        print(f"[recover] removed intermediate {args.sft_out} (+8.1G freed)")
     shutil.rmtree(staging, ignore_errors=True)
-    shutil.rmtree(args.sft, ignore_errors=True)
-    shutil.rmtree("/kaggle/working/dpo_ckpt", ignore_errors=True)
-    print("[recover] done. Adapters no longer needed and were removed.\n"
-          "Continue with Cell 5 (eval), Cell 7 (GGUF), Cell 8, Cell 9.\n"
-          "If Cell 7 needs room, delete the SFT copy first: !rm -rf /kaggle/working/sft_qwen3_4b")
+    disk_report()
+    print("[recover] done. Status:\n"
+          "  - Adapters under /kaggle/working/ckpt and /kaggle/working/dpo_ckpt "
+          "are kept as cheap recoverable backups.\n"
+          "  - Continue with Cell 5 (eval), Cell 7 (GGUF), Cell 8, Cell 9.")
 
 
 if __name__ == "__main__":
