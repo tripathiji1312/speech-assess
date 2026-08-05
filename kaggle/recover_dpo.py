@@ -82,6 +82,15 @@ def purge_stale_cache():
             shutil.rmtree(p, ignore_errors=True)
 
 
+def is_model_dir(p):
+    """True if p looks like a complete saved model (config + shards + tokenizer)."""
+    p = Path(p)
+    return ((p / "config.json").is_file()
+            and (p / "tokenizer_config.json").is_file()
+            and ((p / "model.safetensors").is_file()
+                 or any(p.glob("model-*.safetensors"))))
+
+
 def find_adapter_dir(*candidates):
     """Locate a dir containing adapter_config.json + adapter weights, either at
     the candidate root or in a nested checkpoint-NNN subdir. Trainer checkpoints
@@ -145,7 +154,8 @@ def main():
             f"[recover] SFT adapter not found under {args.sft}. The SFT weights "
             "cannot be recovered from disk - re-run Cell 4 (train_sft.py, ~6h) "
             "then Cell 6 (dpo_stage2.py).")
-    dpo_adapter = find_adapter_dir(args.dpo, "/kaggle/working/dpo_ckpt")
+    dpo_adapter = find_adapter_dir(args.dpo, "/kaggle/working/dpo_ckpt",
+                                   "/kaggle/working/dpo_adapter_staging")
     if dpo_adapter is None:
         raise SystemExit(
             f"[recover] DPO adapter not found under {args.dpo} or "
@@ -162,12 +172,14 @@ def main():
     shutil.copytree(dpo_adapter, staging)
     pin_base_model(staging, args.sft_out)
     shutil.rmtree(args.final_out, ignore_errors=True)
-    if Path(args.sft_out).is_dir():
-        shutil.rmtree(args.sft_out, ignore_errors=True)
 
-    print(f"[recover] stage 1: base + SFT adapter -> {args.sft_out}")
-    pin_base_model(sft_adapter, args.base)
-    load_and_merge(sft_adapter, args.sft_out, args.max_seq_len)
+    if is_model_dir(args.sft_out):
+        print(f"[recover] {args.sft_out} already a complete SFT model - skipping stage 1")
+    else:
+        shutil.rmtree(args.sft_out, ignore_errors=True)
+        print(f"[recover] stage 1: base + SFT adapter -> {args.sft_out}")
+        pin_base_model(sft_adapter, args.base)
+        load_and_merge(sft_adapter, args.sft_out, args.max_seq_len)
 
     print(f"[recover] stage 2: SFT model + DPO adapter -> {args.final_out}")
     load_and_merge(staging, args.final_out, args.max_seq_len)
