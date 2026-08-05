@@ -4,49 +4,82 @@
 
 | | |
 |---|---|
-| Model name | `medchat` (working dirs: `sft_qwen3_4b` → `sft_dpo`) |
-| Task | Structured clinical summary extraction from patient phone-chat transcripts (JSON out) |
+| Model name | `medchat` |
+| Task | Structured clinical summary extraction from patient phone-chat transcripts (strict JSON out) |
 | Base model | `Qwen/Qwen3-4B-Instruct-2507` (vocab 151,936) |
 | Training | 2-stage QLoRA: **SFT** (JSON extraction) then **DPO** (grounded-answer preference, hallucination reduction) |
-| Final artifact | 16-bit merged weights (`/kaggle/working/sft_dpo`, ~7.6 GB) + GGUF Q4_K_M (`medchat-q4.gguf`, ~2.6 GB) |
-| License/use | Research/demo only — synthetic data, **not clinically validated** |
+| Final artifact | 16-bit merged weights (~7.6 GB) + GGUF Q4_K_M (`medchat-q4.gguf`, ~2.6 GB) |
+| License/use | Research/demo only — trained on synthetic data, **not clinically validated** |
 
 ## 2. Architecture
 
 - Decoder-only transformer, ~4B params: 36 layers, GQA, SwiGLU FFN, RMSNorm, RoPE, sdpa attention.
 - Native context 262,144; **trained at 2,048** (SFT) / 1,024 (DPO) tokens.
-- QLoRA: base weights in 4-bit NF4; LoRA on all attention + MLP projections.
-  - SFT: `r=32, alpha=64, dropout=0, target=[q,k,v,o,gate,up,down]_proj`
-  - DPO: `r=16, alpha=32, dropout=0, same targets`
-- fp16 on T4 (bf16 unsupported), `adamw_8bit`, seed 42.
-- Input format: Qwen3 chat template, system prompt = medical intake assistant; `enable_thinking=False` pinned on tokenizer (see §7 caveat).
+- QLoRA: base weights in 4-bit NF4; LoRA on all attention + MLP projections (`q,k,v,o,gate,up,down_proj`).
+- dtype: fp16 on T4/P100 (`is_bfloat16_supported()` is False); bf16 on A100.
+- Seed 42 everywhere.
 
-## 3. Training
+## 3. Training configuration
 
-### Stage 1 — SFT (`kaggle/train_sft.py`)
-| | |
+### Stage 1 — SFT
+| Hyperparameter | Value |
 |---|---|
-| Data | `dataset/final/train.jsonl` — 41,845 rows; 3 turns: system / human transcript / gpt JSON |
-| Hyperparams | lr 2e-4 cosine, warmup 0.05, 1 epoch, batch 4 × 2 GPU, grad-accum 2 (eff. 16), `max_seq_len 2048` |
-| Runs | 2,616 steps, ~6 h on 2×T4; plain `transformers.Trainer` (trl `SFTTrainer` crashes on pickle of `ConfigModuleInstance`) |
-| Note | `packing=false` (JSON correctness needs full attention); pre-tokenized once, instruction tokens masked (`labels=-100`) |
+| Data | 41,845 examples; 3 turns per example: system / user transcript / assistant JSON |
+| LoRA rank / alpha / dropout | 32 / 64 / 0.0 |
+| Learning rate / schedule | 2e-4, cosine |
+| Warmup | 5% (ratio) |
+| Epochs | 1 (2,616 steps) |
+| Per-device batch / grad accum | 4 / 2 (effective 16) |
+| Max sequence length | 2,048 |
+| Optimizer | adamw_8bit |
+| Packing | false (never pack — JSON correctness needs full attention) |
+| Loss masking | instruction turns masked (`labels = -100`) |
+| Runtime | ~6 h on 2×T4 |
 
-### Stage 2 — DPO (`kaggle/dpo_stage2.py`)
-| | |
+### Stage 2 — DPO
+| Hyperparameter | Value |
 |---|---|
-| Data | `dataset/dpo.jsonl` — 1,062 pairs → 1,047 after truncation filter (prompt+response ≤ 1,024 − 32) |
-| Definition | `chosen` = answer grounded in provided context (with citation); `rejected` = answer swapped from an unrelated topic (hallucination trap) |
-| Hyperparams | `beta 0.1`, lr 5e-5 cosine, 1 epoch, batch 4 × 2, `max_seq_len 1024`, warmup 10% (13 steps), 133 steps, `ref_model=None` (implicit ref = frozen base), `max_grad_norm 1.0` |
-| Output | merged 16-bit to `sft_dpo`; checkpoints deleted to fit /kaggle/working |
+| Data | 1,047 preference pairs (chosen = grounded answer with citation; rejected = answer swapped from an unrelated topic, i.e. hallucination trap) |
+| beta | 0.1 |
+| LoRA rank / alpha / dropout | 16 / 32 / 0.0 |
+| Learning rate / schedule | 5e-5, cosine |
+| Warmup | 10% of steps (13 steps) |
+| Epochs | 1 (133 steps) |
+| Per-device batch / grad accum | 4 / 2 |
+| Max length / max prompt length | 1,024 / 896 |
+| Ref model | None (implicit reference = frozen base) |
+| Max grad norm | 1.0 |
+| Optimizer | adamw_8bit |
+| Filtering | pairs where prompt+chosen or prompt+rejected exceed 1,024−32 tokens are dropped |
 
-### Recovery path (used 2026-08-04)
-`kaggle/recover_dpo.py`: rebuilds `sft_dpo` from the surviving DPO LoRA adapter (`dpo_adapter_staging`) + SFT base (`/tmp/sft_qwen3_4b`) when the original run ran out of disk mid-save. Stage-2 merges are idempotent against a pre-existing `sft_dpo` dir.
+### Data format (input to both stages)
+SFT example:
+```json
+{
+  "_id": "...",
+  "category": "none|emergency|dosing|diagnosis|self_harm|out_of_scope|small_talk|illegal",
+  "corruption": "none",
+  "conversations": [
+    {"from": "system", "value": "You are a medical intake assistant ..."},
+    {"from": "human",  "value": "transcript text"},
+    {"from": "gpt",    "value": "{\"chief_complaint\": ...}"}
+  ]
+}
+```
 
-## 4. Data & output schema
+DPO example:
+```json
+{
+  "system": "You are a health information assistant. Answer using ONLY the provided context...",
+  "prompt": "Context:\n<context>\n\nQuestion: <question>",
+  "chosen": "Answer: <grounded answer>\nSource: <source>",
+  "rejected": "Answer: <unrelated-topic answer>"
+}
+```
 
-- Rows: `{_id, category, corruption, conversations: [system, human, gpt]}`.
-- Category mix (val, 4,224 rows): none 4,114 · emergency 37 · out_of_scope 29 · dosing 18 · diagnosis 18 · self_harm 5 · small_talk 2 · illegal 1.
-- Output JSON (`dataset/schema.json`):
+Dataset split: train 41,845 / val 4,224 rows. Val category mix: none 4,114 · emergency 37 · out_of_scope 29 · dosing 18 · diagnosis 18 · self_harm 5 · small_talk 2 · illegal 1.
+
+## 4. Output schema (strict JSON, these exact keys)
 
 ```json
 {
@@ -62,54 +95,76 @@
 }
 ```
 
-## 5. Evaluation (final DPO model, 300-row val sample, greedy)
+System prompt used at inference:
+> You are a medical intake assistant running on a patient's phone. Extract the structured clinical summary from the chat transcript below. Only include information that is actually present in the transcript. If something was not discussed, put it in missing_info. urgency must be one of: "routine", "urgent", "emergency". escalate is true unless urgency is routine. Output strict JSON only, with exactly these keys: chief_complaint, hpi, vitals, medications, allergies, red_flags, missing_info, urgency, escalate. Do not output any text outside the JSON.
+
+## 5. Evaluation (final DPO model, 300-row val sample, greedy decode)
 
 | Metric | Definition | Result |
 |---|---|---|
-| `valid_json` | output parses as JSON after `strip_outside_braces` | **300/300** |
+| `valid_json` | output parses as JSON after stripping text outside the outermost braces | **300/300** |
 | `urgency_acc` | 3-class accuracy (emergency/urgent/routine) | **1.000** |
-| `escalate_acc` | binary accuracy; = balanced accuracy (sens=spec=1.0 on this set) | **1.000** |
+| `escalate_acc` | binary accuracy; = balanced accuracy (sensitivity = specificity = 1.0 on this set) | **1.000** |
 | meds / allergies / red_flags F1 | token-set F1 per list field | **1.000** |
 | chief_complaint F1 | token F1 | **1.000** |
 | `missing_info_precision` | correct∩predicted / predicted | **0.975** |
 
 Interpretation: benchmark-perfect on this set — but val transcripts are synthetic and
 **state the answer verbatim**, so these numbers are an upper bound on pipeline
-correctness, **not** clinical accuracy. Additional harnesses exist in
-`scripts/eval_harness.py` for other suites: `eval_grounded` (abstain/source/claim-support),
-`eval_safety` (per-category keyword behavior), `eval_guardrail` (claim-support verifier).
+correctness, **not** clinical accuracy. Validate against real-world transcripts
+before any production use.
 
-## 6. Deployment
+## 6. Deployment / inference
 
-| Artifact | Path |
-|---|---|
-| 16-bit merged | `/kaggle/working/sft_dpo` (~7.6 GB) |
-| GGUF Q4_K_M | `/kaggle/working/sft_dpo_gguf/sft_dpo.Q4_K_M.gguf` → copied to `medchat-q4.gguf` (~2.6 GB) |
-| LoRA adapters (archive) | `/kaggle/working/ckpt/checkpoint-2616` (SFT), `/kaggle/working/dpo_adapter_staging` (DPO) |
+### GGUF (llama.cpp / llama_cpp_python)
+- File: `medchat-q4.gguf` (Q4_K_M, ~2.6 GB). An f16 GGUF is also available if higher fidelity is needed.
+- Strict JSON via llama-cli:
+  ```
+  llama-cli -m medchat-q4.gguf --grammar configs/extraction.gbnf \
+    --chat-template qwen3 -p "<system>...</system><user>...transcript...</user>"
+  ```
+- `llama_cpp_python` chat API notes:
+  - Custom GBNF grammar is not applied faithfully via `create_chat_completion` (keys come out unquoted).
+  - `response_format={"type": "json_object"}` returns `{}`.
+  - **Use plain generation** and validate/repair the JSON, or use llama-cli with the grammar for production.
 
-- Strict JSON in **llama-cli**: `--grammar configs/extraction.gbnf` (one rule per line; rule names must not contain `_`).
-- `llama_cpp_python` chat API limitations: custom GBNF yields unquoted keys, `response_format={"type":"json_object"}` returns `{}` → use plain generation and validate/post-process, or llama-cli for production.
-- GGUF export: `kaggle/export_gguf.py` (unsloth f16 → `convert_hf_to_gguf.py`, quant Q4_K_M; `--out` target name honored by copying the produced file).
+### HF transformers (16-bit or 4-bit)
+- Chat template: Qwen3; set `enable_thinking=False` for the JSON task.
+- Generation: greedy (`do_sample=False`), stop at EOS. The model may emit a leading
+  `<think>\n\n</think>` block — strip it and any text outside the JSON braces before parsing.
 
-## 7. Known caveats / gotchas
+## 7. Grammar files (`configs/`)
 
-1. Model emits a leading `<think>\n\n</think>` block; harness strips it. `enable_thinking=False` is only honored by chat-template consumers (llama-cli), not `model.generate`.
-2. `transformers 5.5` tokenizer `pad()` raises on `BatchEncoding` dicts → `eval_harness.py` pads manually, left-padded (decoder-only).
-3. `/kaggle/working` is wiped between sessions; ~19.5 GB total → SFT base + checkpoints + merged output do not fit simultaneously (delete checkpoints before `save_pretrained_merged`).
-4. Training has no resume support; 1 epoch / stage kept under Kaggle's 9 h cap.
-5. Benign warnings: `fix_mistral_regex` Qwen3 false positive (do not set), cpp-extension torch version mismatch, `max_new_tokens` overrides `max_length`.
+- `extraction.gbnf` — strict JSON grammar for the output schema above (llama-cli `--grammar`).
+- `guardrail.gbnf` — JSON grammar for the claim-support verifier output.
+- Grammar authoring gotcha (llama.cpp parser): one rule per line; rule names must not
+  contain `_` (allowed chars: a-z, A-Z, `-`, 0-9) — e.g. `nullableString`, `nullableInt`.
 
 ## 8. Reproduce
 
-```bash
-# SFT (2×T4, ~6 h)
-python kaggle/train_sft.py --data dataset/final/train.jsonl --out /kaggle/working/sft_qwen3_4b
-# DPO
-python kaggle/dpo_stage2.py --model /kaggle/working/sft_qwen3_4b --data dataset/dpo.jsonl --out /kaggle/working/sft_dpo
-# Eval
-python scripts/eval_harness.py --model /kaggle/working/sft_dpo --split dataset/final/val.jsonl
-# Export
-python kaggle/export_gguf.py --model /kaggle/working/sft_dpo --out medchat-q4.gguf
-```
+```python
+# Stage 1 SFT (unsloth + transformers.Trainer)
+from unsloth import FastLanguageModel, is_bfloat16_supported
+model, tokenizer = FastLanguageModel.from_pretrained(
+    "Qwen/Qwen3-4B-Instruct-2507", max_seq_length=2048,
+    load_in_4bit=True, dtype=None, attn_implementation="sdpa")
+model = FastLanguageModel.get_peft_model(
+    model, r=32, lora_alpha=64, lora_dropout=0, bias="none",
+    target_modules=["q_proj","k_proj","v_proj","o_proj","gate_proj","up_proj","down_proj"],
+    use_gradient_checkpointing="unsloth", random_state=42)
+# Trainer: lr 2e-4 cosine, warmup_ratio 0.05, 1 epoch, batch 4, grad_accum 2,
+# fp16/bf16 per hardware, adamw_8bit, labels=-100 on instruction tokens
 
-Config references: `configs/sft.yaml`, `configs/dpo.yaml`, `configs/extraction.gbnf`, `configs/guardrail.gbnf`.
+# Stage 2 DPO (trl DPOTrainer)
+model = FastLanguageModel.get_peft_model(
+    sft_model, r=16, lora_alpha=32, lora_dropout=0, bias="none",
+    target_modules=["q_proj","k_proj","v_proj","o_proj","gate_proj","up_proj","down_proj"],
+    use_gradient_checkpointing="unsloth", random_state=42)
+# DPOConfig: beta 0.1, lr 5e-5 cosine, 1 epoch, batch 4, grad_accum 2,
+# max_length 1024, max_prompt_length 896, ref_model=None, max_grad_norm 1.0, adamw_8bit
+
+# Merge to 16-bit and export
+model.save_pretrained_merged("medchat-16bit", tokenizer, save_method="merged_16bit")
+# GGUF: unsloth FastLanguageModel.save_pretrained_gguf -> f16,
+# then convert_hf_to_gguf.py + quantize Q4_K_M
+```
